@@ -1,0 +1,13 @@
+{
+  "city": "上海",
+  "grade": "92号汽油",
+  "price": 8.57,
+  "unit": "元/升",
+  "nextDate": "10月16日",
+  "nextTime": "24:00",
+  "daysLeft": 4,
+  "updatedAt": "17:01",
+  "demo": false,
+  "lastAdjust": "2026-09-25",
+  "from": "datacenter-web.eastmoney.com RPTA_WEB_YJ_JH"
+}

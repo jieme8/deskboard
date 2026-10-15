@@ -1,0 +1,9 @@
+# build.sh 的产物：工具二进制、iconset、icon-master.png、DeskBoard.app
+build/
+.metadata_never_index
+
+# 构建暂存目录（macOS 下在 $TMPDIR，这里兜底）
+deskboard-stage/
+
+# macOS
+.DS_Store

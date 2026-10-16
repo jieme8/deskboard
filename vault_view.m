@@ -1534,7 +1534,11 @@ static BOOL VaultEaseDone(double x, double target, double eps) {
 - (void)scrollWheel:(NSEvent *)event {
     CGFloat maxS = [self maxScroll];
     if (maxS <= 0) return;
-    CGFloat d = event.scrollingDeltaY;
+    // 负号是必须的，别照"增量往上加"的直觉改回去：_scroll 是翻转文档里的可视区 origin.y，
+    // 而 AppKit 给的 scrollingDeltaY 是"内容位移"方向的。对着原生 NSScrollView 量过
+    // （tools/probe_scroll.m）：+10 的精确增量让 origin.y 变成 -10。这里顺着加，就和系统
+    // 里所有窗口反向；而且鼠标和触控板一起反 —— 因为自然/反向卷动在上游就并进事件符号里了。
+    CGFloat d = -event.scrollingDeltaY;
     // 滚轮一格和触控板一划的量级差几十倍，统一缩到"一次一行"的手感
     if (fabs(d) > 0 && fabs(d) < 4.0) d *= 16.0;
     _scrollTarget = MIN(MAX(_scrollTarget + d, 0), maxS);

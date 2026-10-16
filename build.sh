@@ -65,6 +65,9 @@ build_tools() {
         -o "$BUILD_DIR/tools/probe_sensors" tools/probe_sensors.m smc.m
   clang "${BASE[@]}" -framework IOKit \
         -o "$BUILD_DIR/tools/probe_temp" tools/probe_temp.m
+  # 滚动方向的事实基准：同一个事件喂给原生 NSScrollView 和弹药库组件，比方向
+  clang "${BASE[@]}" -framework AppKit -framework CoreGraphics -framework CoreImage -framework ImageIO -framework QuartzCore \
+        -o "$BUILD_DIR/tools/probe_scroll" tools/probe_scroll.m vault.m vault_art.m vault_view.m backdrop.m quad.m
   clang "${BASE[@]}" -framework AppKit -framework CoreImage -framework ImageIO -framework QuartzCore -framework SystemConfiguration -framework CoreWLAN -framework IOKit \
         -o "$BUILD_DIR/tools/preview_vault" tools/preview_vault.m vault.m vault_art.m vault_view.m backdrop.m quad.m
   clang "${BASE[@]}" -framework AppKit \

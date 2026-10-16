@@ -13,6 +13,25 @@
 - (double)currentSweep;
 @end
 
+// 滚动方向断言要量卡片在屏幕上的实际位移，所以借布局函数
+@interface DeskVaultView (VerifyScroll)
+- (NSRect)cardRectAtIndex:(NSInteger)idx in:(NSRect)b;
+- (CGFloat)maxScroll;
+@end
+
+// 用 CGEvent 造滚轮事件再转成 NSEvent：pixel 单位 = 触控板的精确增量，
+// line 单位 = 滚轮一格。事实基准来自 tools/probe_scroll.m —— 同一个事件喂给
+// 原生 NSScrollView（翻转文档），正 scrollingDeltaY 让可视区 origin.y 变小。
+static NSEvent *ScrollProbeEvent(CGFloat deltaY, BOOL precise) {
+    CGEventRef cg = CGEventCreateScrollWheelEvent(
+        NULL, precise ? kCGScrollEventUnitPixel : kCGScrollEventUnitLine, 1, (int32_t)deltaY);
+    if (!cg) return nil;
+    CGEventSetLocation(cg, CGPointMake(100, 100));
+    NSEvent *e = [NSEvent eventWithCGEvent:cg];
+    CFRelease(cg);
+    return e;
+}
+
 
 static int gFail = 0;
 static int gPass = 0;
@@ -666,6 +685,51 @@ int main(int argc, const char *argv[]) {
         Say(wakes == afterSettle, @"静置期间没人自己把表叫回来（唤醒 %d→%d 次）", afterSettle, wakes);
         [ev applyPreviewHoverCard:0 dock:-1 dropHot:0.5 dropCount:0 scroll:0];
         Say([ev needsRedraw] && [ev currentSweep] > -1.0, @"鼠标一悬停，动画立刻重新有活干");
+
+        printf("\n弹药库滚动方向：和原生 NSScrollView 同向\n");
+        // 组件的 _scroll 扮演的就是原生可视区 origin.y 的角色（翻转坐标，越大越往文档下方），
+        // 原生是 origin.y -= scrollingDeltaY。写反一次，鼠标和触控板会同时反掉。
+        NSMutableArray<DeskVaultItem *> *scrollItems = [NSMutableArray array];
+        for (int i = 0; i < 12; i++) {
+            DeskVaultItem *it = [[DeskVaultItem alloc] init];
+            it.name = [NSString stringWithFormat:@"滚动探针%02d", i];
+            it.kind = VaultItemFolder;
+            [scrollItems addObject:it];
+        }
+        DeskVaultView *sv = [[DeskVaultView alloc] initWithItems:scrollItems];
+        [sv setStandInScreenRect:NSMakeRect(0, 0, kVaultViewWidth, kVaultViewHeight)];
+        CGFloat midScroll = [sv maxScroll] / 2.0;
+        Say(midScroll > 0, @"12 个库位时 maxScroll=%.0f，从中段起步才测得出正负两个方向", midScroll);
+
+        // expect 是 _scroll（即原生 origin.y）该变的量：原生做减法，所以它恒等于 -增量
+        struct { NSString *tag; CGFloat dy; BOOL precise; CGFloat expect; } scrollCases[] = {
+            { @"触控板", 10.0, YES, -10.0 },
+            { @"触控板", -10.0, YES, 10.0 },
+            { @"滚轮一格", 1.0, NO, 0 },   // 一格走的是"手感放大"，只查方向
+            { @"滚轮一格", -1.0, NO, 0 },
+        };
+        for (size_t i = 0; i < sizeof(scrollCases) / sizeof(scrollCases[0]); i++) {
+            NSEvent *e = ScrollProbeEvent(scrollCases[i].dy, scrollCases[i].precise);
+            if (!e) { Say(NO, @"%@：造不出滚动事件", scrollCases[i].tag); continue; }
+            [sv applyPreviewHoverCard:-1 dock:-1 dropHot:0 dropCount:0 scroll:midScroll];
+            NSRect before = [sv cardRectAtIndex:0 in:sv.bounds];
+            [sv scrollWheel:e];
+            CGFloat moved = [[sv valueForKey:@"_scrollTarget"] floatValue] - midScroll;
+            for (int k = 0; k < 200; k++) [sv tick:1.0 / 60.0];   // 等缓动收敛再量像素位移
+            NSRect after = [sv cardRectAtIndex:0 in:sv.bounds];
+            CGFloat cardShift = after.origin.y - before.origin.y;   // 翻转坐标里正 = 屏幕上往下
+            CGFloat dy = e.scrollingDeltaY;
+            Say(cardShift * dy > 0,
+                @"%@：scrollingDeltaY=%+.0f 时卡片往%@移了 %.1fpt（原生同向）",
+                scrollCases[i].tag, dy, cardShift > 0 ? @"下" : @"上", fabs(cardShift));
+            Say(moved != 0, @"%@：偏移确实变了 %+.1f，没被夹死也没原地不动",
+                scrollCases[i].tag, moved);
+            if (scrollCases[i].expect != 0)
+                Say(fabs(moved - scrollCases[i].expect) < 0.01,
+                    @"触控板精确增量按 pt 原样走（%+.1f → %+.1f）", scrollCases[i].expect, moved);
+            CGFloat s = [[sv valueForKey:@"_scrollTarget"] floatValue];
+            Say(s >= 0 && s <= [sv maxScroll], @"偏移仍在 [0, %.0f] 内，没滚出边界", [sv maxScroll]);
+        }
 
         printf("\n%d 项通过，%d 项失败\n", gPass, gFail);
         return gFail == 0 ? 0 : 1;

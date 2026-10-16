@@ -19,7 +19,7 @@ static const NSInteger kShortColRows = 4; // 前 4 行放左列，其余放右�
 
 
 typedef struct {
-    NSColor *border, *sep, *title, *primary, *label, *footer, *up, *accent, *barTrack, *glow;
+    NSColor *border, *sep, *title, *primary, *label, *footer, *up, *down, *accent, *barTrack, *glow;
 } DeskPalette;
 
 static NSColor *RGB(int r, int g, int b, double a) {
@@ -47,6 +47,7 @@ static DeskPalette PaletteFor(DeskStyle style, BOOL dark) {
         p.label    = RGB(140, 196, 226, 1);
         p.footer   = RGB(112, 162, 192, 1);
         p.up       = RGB(255, 122, 122, 1);
+        p.down     = RGB(120, 226, 172, 1);
         p.accent   = RGB(112, 216, 255, 1);
         p.barTrack = RGB(120, 214, 255, 0.16);
         return p;
@@ -59,6 +60,7 @@ static DeskPalette PaletteFor(DeskStyle style, BOOL dark) {
         p.label    = RGB(140, 168, 192, 1);
         p.footer   = RGB(126, 154, 178, 1);
         p.up       = RGB(255, 106, 106, 1);
+        p.down     = RGB(98, 212, 152, 1);
         p.accent   = RGB(86, 184, 250, 1);
         p.barTrack = [NSColor colorWithWhite:1.00 alpha:0.13];
     } else {
@@ -69,6 +71,7 @@ static DeskPalette PaletteFor(DeskStyle style, BOOL dark) {
         p.label    = RGB(74, 98, 118, 1);
         p.footer   = RGB(96, 118, 138, 1);
         p.up       = RGB(200, 46, 46, 1);
+        p.down     = RGB(20, 138, 82, 1);
         p.accent   = RGB(10, 119, 193, 1);
         p.barTrack = [NSColor colorWithWhite:0.00 alpha:0.12];
     }
@@ -186,6 +189,7 @@ static void DrawFeather(NSRect b, NSColor *color, double feather, double targetA
     NSFont *unitFont  = [NSFont systemFontOfSize:11.0 weight:NSFontWeightRegular];
     NSFont *labelFont = [NSFont systemFontOfSize:10.5 weight:NSFontWeightRegular];
     NSFont *rowFont   = [NSFont monospacedDigitSystemFontOfSize:11.5 weight:NSFontWeightMedium];
+    NSFont *trendFont = [NSFont monospacedDigitSystemFontOfSize:11.0 weight:NSFontWeightSemibold];
 
     // 左侧油价区：三行当成一个整体垂直居中，卡片变高也不会堆在顶上
     NSString *info = m.infoLine;
@@ -199,10 +203,17 @@ static void DrawFeather(NSRect b, NSColor *color, double feather, double targetA
     cursor += kTitleH + 3;
 
     [m.price drawAtPoint:NSMakePoint(x, cursor) withAttributes:Attrs(priceFont, p.primary)];
+    CGFloat after = x + [m.price sizeWithAttributes:Attrs(priceFont, p.primary)].width + 5;
     if (m.unit.length) {
-        CGFloat priceW = [m.price sizeWithAttributes:Attrs(priceFont, p.primary)].width;
         CGFloat unitY = cursor + (priceFont.ascender - unitFont.ascender) - 3.0;
-        [m.unit drawAtPoint:NSMakePoint(x + priceW + 5, unitY) withAttributes:Attrs(unitFont, p.label)];
+        [m.unit drawAtPoint:NSMakePoint(after, unitY) withAttributes:Attrs(unitFont, p.label)];
+        after += [m.unit sizeWithAttributes:Attrs(unitFont, p.label)].width + 7.0;
+    }
+    // 涨跌标记跟着价走：价格本身十天才动一次，没有这个标记看不出换没换过价
+    if (m.trendText.length) {
+        CGFloat trendY = cursor + (priceFont.ascender - trendFont.ascender) - 2.0;
+        [m.trendText drawAtPoint:NSMakePoint(after, trendY)
+                    withAttributes:Attrs(trendFont, m.trendUp ? p.up : p.down)];
     }
     cursor += kPriceH + 2;
 

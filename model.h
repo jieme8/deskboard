@@ -14,6 +14,8 @@
 @property (nonatomic, copy) NSString *price;
 @property (nonatomic, copy) NSString *unit;
 @property (nonatomic, copy) NSString *infoLine;   // 油价区只留一行说明，紧凑
+@property (nonatomic, copy) NSString *trendText;  // 涨跌标记，例：▲0.32；接口没给涨跌数据时为空
+@property (nonatomic, assign) BOOL trendUp;       // 涨红跌绿，决定 trendText 用哪个颜色
 @property (nonatomic, copy) NSString *footer;
 @property (nonatomic, copy) NSString *loadError;   // nil 表示数据可用
 @property (nonatomic, copy) NSString *statsHeader;

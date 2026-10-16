@@ -5,9 +5,11 @@
   "unit": "元/升",
   "nextDate": "10月16日",
   "nextTime": "24:00",
-  "daysLeft": 4,
-  "updatedAt": "17:01",
+  "daysLeft": 1,
+  "updatedAt": "13:58",
   "demo": false,
+  "prevPrice": 8.25,
+  "delta": 0.32,
   "lastAdjust": "2026-09-25",
   "from": "datacenter-web.eastmoney.com RPTA_WEB_YJ_JH"
 }

@@ -89,8 +89,9 @@ int main(int argc, const char *argv[]) {
                 NSDictionary *d = (__bridge NSDictionary *)CFArrayGetValueAtIndex(all, i);
                 if (![d[@"kCGWindowOwnerName"] isEqualToString:owner]) continue;
                 NSRect b = RectOf(d[@"kCGWindowBounds"]);
-                printf("  layer=%-12ld bounds=(%.0f, %.0f) %.0fx%.0f onscreen=%d\n",
-                       (long)[d[@"kCGWindowLayer"] integerValue], b.origin.x, b.origin.y,
+                printf("  layer=%-12ld alpha=%.2f bounds=(%.0f, %.0f) %.0fx%.0f onscreen=%d\n",
+                       (long)[d[@"kCGWindowLayer"] integerValue],
+                       [d[@"kCGWindowAlpha"] doubleValue], b.origin.x, b.origin.y,
                        b.size.width, b.size.height, [d[@"kCGWindowIsOnscreen"] boolValue]);
             }
             CFRelease(all);
@@ -102,7 +103,9 @@ int main(int argc, const char *argv[]) {
         CGFloat mainH = screens.firstObject.frame.size.height;
         // 位置存档按"屏 × 分辨率"分档，期望位置要跟窗口所在的那块屏对齐
         DeskPlaceStore *store = [[DeskPlaceStore alloc] initWithDictionary:PrefDict(@"DeskBoardPlaces")];
-        printf("配置：位置存档 %lu 档（按屏 × 点分辨率分键）\n", (unsigned long)store.count);
+        DeskPlaceStore *vstore = [[DeskPlaceStore alloc] initWithDictionary:PrefDict(@"DeskBoardVaultPlaces")];
+        printf("配置：位置存档 卡片 %lu 档 / 弹药库 %lu 档（按屏 × 点分辨率分键）\n",
+               (unsigned long)store.count, (unsigned long)vstore.count);
 
         NSArray<NSDictionary *> *mine;
         if (expectHidden) {
@@ -150,14 +153,91 @@ int main(int argc, const char *argv[]) {
         }
         mine = shown;
 
-        Say(mine.count == screens.count, @"每屏一个窗口：检出 %lu / 屏幕 %lu",
-            (unsigned long)mine.count, (unsigned long)screens.count);
         if (mine.count == 0) {
             fprintf(stderr, "\n没有任何 %s 窗口，无法继续校验。\n", owner.UTF8String);
             return 1;
         }
 
+        // 现在桌上有两组窗口：油价卡片（宽 480 或变形时 600）和弹药库（宽 432）。
+        // 断言得按组分开跑，否则弹药库会被当成"多出来的第二张卡片"，
+        // 拿卡片的位置存档去比它，怎么算都不对。
+        // 调角时窗口会从本体各边撑出 60pt 余量（432→552 / 480→600），
+        // 分类必须认这两档，只按 432 判会把变形后的弹药库误当成第二张卡片
+        const double kVaultW = 432.0, kVaultH = 294.0;
+        const double kVaultPad = 60.0;
+        NSMutableArray *cards = [NSMutableArray array], *vaults = [NSMutableArray array];
         for (NSDictionary *d in mine) {
+            NSRect r = RectOf(d[@"kCGWindowBounds"]);
+            if (fabs(r.size.width - kVaultW) <= 2.0 ||
+                fabs(r.size.width - (kVaultW + kVaultPad * 2)) <= 2.0) [vaults addObject:d];
+            else [cards addObject:d];
+        }
+
+        // 弹药库被用户隐藏、或因被别的窗口盖住而自动收起时，窗口根本不在上屏列表里，
+        // 下面那圈位置断言一条都跑不到。以前这里什么都不说，最后照样报"全部通过"，
+        // 看起来像验过了 —— 实际上最需要验的时候恰恰没验。显式讲清楚。
+        if (vaults.count == 0) {
+            BOOL userHidden = [Pref(@"DeskBoardVaultHidden") boolValue];
+            printf("⚠ 弹药库位置校验本轮未执行：没有可检的窗口（%s）\n",
+                   userHidden ? "用户已隐藏" : "多半是被别的窗口盖住触发了自动收起");
+            printf("  下面卡片面板的结果不代表弹药库；要验弹药库位置，先把它挪到不会被盖住的地方。\n");
+        } else {
+            printf("弹药库窗口检出 %lu 个\n", (unsigned long)vaults.count);
+        }
+
+        for (NSDictionary *d in vaults) {
+            NSRect b = RectOf(d[@"kCGWindowBounds"]);
+            printf("弹药库 bounds=(%.0f, %.0f) %.0fx%.0f\n", b.origin.x, b.origin.y,
+                   b.size.width, b.size.height);
+            // 层级是硬约束：只在桌面图标层，用户所有应用窗口（全屏的也一样）都在它之上，
+            // 所以任何模式下都不可能盖到窗口上
+            NSInteger vlayer = [d[@"kCGWindowLayer"] integerValue];
+            Say(vlayer == kLayerDesktop, @"弹药库层级=%ld（必须是桌面图标层，盖不到任何窗口上）",
+                (long)vlayer);
+            Say([d[@"kCGWindowIsOnscreen"] boolValue], @"弹药库处于上屏状态");
+            // 透明度走窗口 alpha，WindowServer 直接报这个键；键缺失的老系统就跳过这条
+            id alphaKey = d[@"kCGWindowAlpha"];
+            if (alphaKey) {
+                double want = [Pref(@"DeskBoardVaultAlpha") doubleValue];
+                if (want <= 0) want = 1.0;
+                double got = [alphaKey doubleValue];
+                Say(fabs(got - want) <= 0.02, @"弹药库透明度 实测 %.2f（存档期望 %.2f）", got, want);
+            }
+            // 变形时窗口是撑大的画布，卡片本体在中间
+            BOOL warped = fabs(b.size.width - (kVaultW + kVaultPad * 2)) <= 2.0;
+            NSRect body = warped ? NSInsetRect(b, kVaultPad, kVaultPad) : b;
+            Say(fabs(body.size.width - kVaultW) <= 2.0 && fabs(body.size.height - kVaultH) <= 2.0,
+                @"弹药库本体 %.0fx%.0fpt（%@，窗口 %.0fx%.0f）",
+                body.size.width, body.size.height, warped ? @"变形中" : @"未变形",
+                b.size.width, b.size.height);
+            NSScreen *host = nil;
+            for (NSScreen *sc in screens) {
+                if (NSPointInRect(NSMakePoint(NSMidX(b), NSMidY(b)), ToCG(sc.frame, mainH))) { host = sc; break; }
+            }
+            if (!host) { Say(NO, @"弹药库落在某块屏幕范围内"); continue; }
+            NSRect vis = ToCG(host.visibleFrame, mainH);
+            DeskPlace vp = [vstore placeForScreen:host];
+            CGFloat vx = (vp.corner == 1 || vp.corner == 3) ? NSMaxX(vis) - kVaultW - vp.dx
+                                                            : vis.origin.x + vp.dx;
+            // 这里必须比"该对齐的那条横边"，不能把 App 的还原公式直接搬过来。
+            // App 那边（main.m vaultFrameForScreen:）用的是屏幕左下原点，本工具的
+            // b 和 vis 都已经是左上原点（ToCG 翻过了），y 轴方向是反的：
+            //   上沿锚定 → 本体顶边 = vis.origin.y + dy
+            //   下沿锚定 → 本体底边 = NSMaxY(vis) - dy
+            // 照抄 App 的式子会凭空多出几百点的假偏差。别"顺手修正"这里。
+            CGFloat edgeY = (vp.corner >= 2) ? NSMaxY(vis) - vp.dy : vis.origin.y + vp.dy;
+            CGFloat gotY = (vp.corner >= 2) ? NSMaxY(body) : body.origin.y;
+            // 变形时窗口是撑大的画布，要拿卡片本体去比，否则会拿画布左上角对期望值
+            Say(fabs(body.origin.x - vx) <= 2.0 && fabs(gotY - edgeY) <= 2.0,
+                @"弹药库对齐 %@ 角（档 %@）：期望 x=%.0f 横边=%.0f，实测 x=%.0f 横边=%.0f（偏差 %+.1f, %+.1f）",
+                CornerName(vp.corner), [vstore keyForScreen:host] ?: @"?", vx, edgeY,
+                body.origin.x, gotY, body.origin.x - vx, gotY - edgeY);
+        }
+
+        Say(cards.count == screens.count, @"每屏一个卡片窗口：检出 %lu / 屏幕 %lu",
+            (unsigned long)cards.count, (unsigned long)screens.count);
+
+        for (NSDictionary *d in cards) {
             NSRect b = RectOf(d[@"kCGWindowBounds"]);
             NSInteger layer = [d[@"kCGWindowLayer"] integerValue];
             printf("窗口 bounds=(%.0f, %.0f) %.0fx%.0f\n", b.origin.x, b.origin.y, b.size.width, b.size.height);
@@ -178,7 +258,9 @@ int main(int argc, const char *argv[]) {
             double tol = pad > 0 ? 8.0 : 2.0;
             NSRect cb = NSInsetRect(b, pad, pad);
 
-            // 期望位置从"这块屏这个分辨率"的存档里取（含同屏兜底），和 App 同一套规则
+            // 期望位置从"这块屏这个分辨率"的存档里取（含同屏兜底），和 App 同一套规则。
+            // 注意是"比该对齐的那条横边"，不是照抄 App 的还原公式：b 和 vis 已经是
+            // 左上原点，y 轴和 App 的左下原点相反。理由同弹药库那段注释。
             DeskPlace p = [store placeForScreen:host];
             double cardW = 480.0;   // kDeskPanelWidth，横版
             CGFloat x = (p.corner == 1 || p.corner == 3) ? NSMaxX(vis) - cardW - p.dx : vis.origin.x + p.dx;

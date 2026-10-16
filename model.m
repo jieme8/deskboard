@@ -101,6 +101,15 @@ static NSString *DaysText(NSNumber *daysLeft) {
     NSString *unit = StrField(dict, @"unit");
     m.unit = unit ?: @"";
 
+    // 涨跌额是接口自带的（调价那天才有），卡片靠它画红涨绿跌。
+    // 缺这个字段说明还看不出涨跌，留空比画一个 ▲0.00 诚实。
+    NSNumber *delta = NumField(dict, @"delta");
+    if (delta && fabs(delta.doubleValue) > 0.001) {
+        BOOL up = delta.doubleValue > 0;
+        m.trendUp = up;
+        m.trendText = [NSString stringWithFormat:@"%@%.2f", up ? @"▲" : @"▼", fabs(delta.doubleValue)];
+    }
+
     NSString *nextDate = StrField(dict, @"nextDate");
     NSString *nextTime = StrField(dict, @"nextTime");
     NSString *days = DaysText(NumField(dict, @"daysLeft"));
@@ -108,7 +117,9 @@ static NSString *DaysText(NSNumber *daysLeft) {
     if (nextDate.length) {
         [info addObject:nextTime.length ? [NSString stringWithFormat:@"%@ %@", nextDate, nextTime] : nextDate];
     }
-    if (days.length && ![days isEqualToString:@"\u2014"]) [info addObject:[NSString stringWithFormat:@"还剩 %@", days]];
+    // "还剩"只跟在真的还有几天后面：daysLeft=0 是"今天"、负数是"已过调价日"，
+    // 无脑加前缀会拼出"还剩 今天"这种读不通的话
+    if (days.length && ![days isEqualToString:@"\u2014"]) [info addObject:days.integerValue > 0 ? [NSString stringWithFormat:@"还剩 %@", days] : days];
     m.infoLine = info.count ? [info componentsJoinedByString:@" · "] : @"";
 
     NSString *updatedAt = StrField(dict, @"updatedAt");
@@ -116,6 +127,11 @@ static NSString *DaysText(NSNumber *daysLeft) {
     [footer appendString:updatedAt.length ? [NSString stringWithFormat:@"更新于 %@", updatedAt]
                                           : @"更新时间未知"];
     if ([dict[@"demo"] boolValue]) [footer appendString:@" · 演示数据"];
+    // 标明这一版价是几号调出来的。价格本身不动声色的日子全靠它区分
+    NSString *lastAdjust = StrField(dict, @"lastAdjust");
+    if (lastAdjust.length >= 10) {
+        [footer appendFormat:@" · %@ 调价", [lastAdjust substringWithRange:NSMakeRange(5, 5)]];
+    }
     m.footer = [footer copy];
 
     return m;

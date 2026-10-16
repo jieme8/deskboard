@@ -3,11 +3,16 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <fcntl.h>
 #import <unistd.h>
+#import <CoreGraphics/CoreGraphics.h>
 #import "model.h"
+#import "oilfeed.h"
 #import "panel_view.h"
 #import "places.h"
 #import "hud.h"
 #import "sysmon.h"
+#import "vault.h"
+#import "vault_view.h"
+#import "vault_art.h"
 
 static NSString *const kDomain = @"com.hujie.deskboard";
 
@@ -85,13 +90,65 @@ static NSImage *DeskStatusGlyph(void) {
     return img;
 }
 
+// 预览浮窗的内容视图：普通 NSView（不翻转），NSImage 直接 drawInRect: 就是正的
+@interface DeskVaultPreviewView : NSView
+@property (nonatomic, strong) NSImage *image;
+@property (nonatomic, strong) NSColor *tint;
+@end
+
+@implementation DeskVaultPreviewView
+- (void)drawRect:(NSRect)r {
+    [[NSColor colorWithSRGBRed:8.0/255.0 green:26.0/255.0 blue:46.0/255.0 alpha:1] setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:r xRadius:8.0 yRadius:8.0] fill];
+    if (self.image) {
+        const CGFloat pad = 6.0;
+        NSSize ts = self.image.size;
+        CGFloat aw = NSWidth(r) - pad * 2, ah = NSHeight(r) - pad * 2;
+        CGFloat s = MIN(aw / ts.width, ah / ts.height);     // 整幅 contain
+        CGFloat w = ts.width * s, h = ts.height * s;
+        [self.image drawInRect:NSMakeRect(NSMidX(r) - w / 2.0, NSMidY(r) - h / 2.0, w, h)
+                       fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0];
+    }
+    [[self.tint colorWithAlphaComponent:0.45] setStroke];
+    NSBezierPath *edge = [NSBezierPath bezierPathWithRoundedRect:r xRadius:8.0 yRadius:8.0];
+    edge.lineWidth = 1.0;
+    [edge stroke];
+}
+@end
+
 @interface DeskBoardApp : NSObject <NSApplicationDelegate, NSWindowDelegate>
 @end
+
+// 弹药库透明度的下限：再低就基本看不见组件了，菜单也不给更透的档。
+// 注意窗口 alpha 只改画面不改命中测试，所以低档位下这块地方照样会吃掉点击
+static const double kVaultAlphaMin = 0.05;
+// 透明度档位：100% 起每档减 5% 一直到下限。按步长生成而不是手写死二十个数字，
+// 存档里落的就是这些整数百分比之一，syncMenu 的勾也直接拿它比对
+static const NSInteger kVaultAlphaMaxPct = 100;
+static const NSInteger kVaultAlphaStep = 5;
+
+// 「被应用窗口盖住就临时让开」的几个阈值。
+// 层级不是事件驱动的，只能定时去 WindowServer 问一次，所以这几个数决定了这动作的手感。
+// 两个方向的档数刻意不对称：
+//   收起要慢（kVaultCoverStrikes 档 ≈1.8 秒）——宁可多等一会儿，也别被一掠而过的窗口骗走，
+//     组件凭空消失比多露一会儿刺眼得多；
+//   出现要快（1 档 ≤kVaultCoverInterval）——从全屏退到桌面时，人正要动手操作，
+//     组件慢两秒才跳出来，那一下等待比闪现更让人烦躁。
+// 两边都用 2 档的时候，退全屏实测要等 2~3 秒，那是把"防误判"的代价全算在了恢复上。
+static const NSTimeInterval kVaultCoverInterval = 0.6;
+static const NSInteger kVaultCoverStrikes = 3;
+static const NSInteger kVaultCoverClearTicks = 1;
+// 露着的比例低于这个数才算被盖住：只压到一个角的话组件大体还能用，藏起来反而添乱
+static const CGFloat kVaultCoverShare = 0.25;
+
 
 @implementation DeskBoardApp {
     NSStatusItem *_statusItem;
     NSMenu *_styleMenu;
-    NSMenuItem *_editItem;
+    NSMenuItem *_cardItem;       // 菜单里「卡片面板 › 显示/隐藏」，对勾跟着 _hidden 走
+    NSMenuItem *_editItem;       // 「卡片面板 › 调角模式」
+    NSMenuItem *_vaultItem;
+    NSMenuItem *_vaultEditItem;  // 「弹药库 › 调角模式」
     NSMutableArray<NSWindow *> *_windows;
     DeskModel *_model;
     DeskSysMonitor *_sys;
@@ -105,10 +162,34 @@ static NSImage *DeskStatusGlyph(void) {
     NSString *_savedStamp;      // 上次点保存的时刻，胶囊上显示"已保存 13:20"
 
     BOOL _hidden;
-    BOOL _editing;              // 调角模式
+    BOOL _editing;              // 卡片自己的调角模式，和弹药库各切各的
     DeskQuadOffsets _quad;      // 四角位移，全 0 就是没变形
     BOOL _applying;             // 我们自己 setFrame 时别再回读位置，免得和拖拽互相触发
     int _lockFD;
+
+    // 弹药库：独立的窗口组和独立的摆位档，拖动互不影响
+    NSMutableArray<NSWindow *> *_vaultWindows;
+    // 悬停预览的浮窗：整块浮在弹药库上方，鼠标移开即消失。
+    // 组件只有 432×294，卡片区被 6 张卡占满，预览要挪出去只能另开一块窗。
+    // 它点击穿透（ignoresMouseEvents）、不抢激活，所以既不挡卡片也不打断手上的活。
+    NSWindow *_vaultPreviewWindow;
+    DeskPlaceStore *_vaultPlaces;
+    BOOL _vaultHidden;
+    NSInteger _vaultStyle;        // 弹药库外观，与卡片同一套枚举但各存各的
+    NSMenu *_vaultStyleMenu;
+    NSMenu *_vaultAlphaMenu;
+    DeskQuadOffsets _vaultQuad;   // 弹药库自己的四角位移，和卡片各调各的
+    BOOL _vaultEditing;           // 弹药库自己的调角模式，和卡片各切各的
+    double _vaultAlpha;           // 整块组件的不透明度，1.0 = 原样，菜单分档
+    NSTimer *_vaultCoverTimer;    // 被盖住检测：窗口层级不是事件，只能定时问 WindowServer
+    NSInteger _vaultCovered;      // 连续几次检出被盖住（防一掠而过导致闪一下）
+    NSInteger _vaultClear;        // 连续几次检出空出来了
+    BOOL _vaultCoverHidden;       // 因被盖住而临时收起，和用户手动隐藏分开记
+    NSTimer *_vaultTick;        // 动画驱动，和油价那个 2 秒轮询分开
+    NSDate *_lastVaultTick;
+    NSUInteger _vaultFrameSkip; // 空闲时降频：慢扫描带 10fps 就够，省得白烧 CPU
+    NSDate *_lastVaultStat;
+
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
@@ -133,19 +214,53 @@ static NSImage *DeskStatusGlyph(void) {
         [self saveConfig];
     }
     _hidden = [ud boolForKey:K(@"Hidden")];
+    _vaultHidden = [ud boolForKey:K(@"VaultHidden")];
+    // 层级现在是硬约束：弹药库只贴桌面图标层，任何应用窗口（全屏的也一样）都在它之下。
+    // 旧版有个「桌面置顶」开关会把它提到 NSFloatingWindowLevel，正好浮在窗口上面，已经整个删掉；
+    // 老存档在这里顺手清掉，别留个没人读的键。
+    if ([ud objectForKey:K(@"VaultFloating")]) {
+        [ud removeObjectForKey:K(@"VaultFloating")];
+        DeskLog(@"旧的「桌面置顶」档已废弃并清除：弹药库常驻桌面图标层，不再浮到任何窗口上");
+    }
+    NSNumber *vaVal = [ud objectForKey:K(@"VaultAlpha")];
+    _vaultAlpha = vaVal ? MIN(MAX(vaVal.doubleValue, kVaultAlphaMin), 1.0) : 1.0;
+    // 菜单里只有 kVaultAlphaStep 的整数倍。存档被手改成 0.62 这种离档的值时，
+    // syncMenu 会一个勾都点不上，看起来像没生效，所以读档就吸到最近的档位上
+    _vaultAlpha = MIN(MAX(round(_vaultAlpha * 100.0 / kVaultAlphaStep) * kVaultAlphaStep / 100.0,
+                          kVaultAlphaMin), 1.0);
+    _vaultQuad = DeskQuadOffsetsFromString([ud stringForKey:K(@"VaultQuad")]);
+    // 弹药库默认走实底卡：采样了真实壁纸，压得住字，也最融入桌面
+    NSNumber *vsVal = [ud objectForKey:K(@"VaultStyle")];
+    _vaultStyle = vsVal ? MIN(vsVal.integerValue, (NSInteger)DeskStyleHUD) : (NSInteger)DeskStylePlate;
     NSNumber *styleVal = [ud objectForKey:K(@"Style")];
     // 旧的"透视站立"已经并到调角里，存过的值越界就退到 HUD
     _style = styleVal ? MIN(styleVal.integerValue, (NSInteger)DeskStyleHUD) : DeskStyleFeather;
     _quad = DeskQuadOffsetsFromString([ud stringForKey:K(@"Quad")]);
 
     [self prepareDataDir];
+    // 油价从东方财富实时拉，写回上面那个 mock.json；它一变，下面 2 秒的
+    // mtime 轮询自己会重画，面板和绘制代码都不用动
+    [DeskOilFeed startWithCachePath:_mockPath];
     if (![self acquireSingleInstanceLock]) exit(0);   // 两个实例会各画一张卡，别靠运气
     _sys = [DeskSysMonitor new];
     [_sys sample];   // 先取一次基线，下一拍才有差值型指标
+    // 弹药库的位置另存一份：和卡片各摆各的，共用一个存档会互相顶掉
+    _vaultPlaces = [[DeskPlaceStore alloc] initWithDictionary:[ud dictionaryForKey:K(@"VaultPlaces")]];
+    if (_vaultPlaces.count == 0) {
+        DeskPlace seed = [DeskPlaceStore defaultPlace];
+        // 默认左下角。右下角是访达放桌面图标的地方，弹药库是块不透明的板，
+        // 压上去那些图标就没法拖了；放左边则是"图标从右边拖过来"的顺手方向
+        seed.corner = 2;
+        seed.dx = 16.0;
+        seed.dy = 16.0;
+        [_vaultPlaces setPlace:seed forKey:[_vaultPlaces keyForScreen:[NSScreen mainScreen]]];
+        [self saveConfig];
+    }
     [self buildStatusItem];
     [self rebuildWindows];
+    [self rebuildVaultWindows];
+    [self startVaultTicking];
     [self startPolling];
-
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(screenDidChange:)
                                                  name:NSApplicationDidChangeScreenParametersNotification
@@ -184,6 +299,11 @@ static NSImage *DeskStatusGlyph(void) {
     [ud setBool:_hidden forKey:K(@"Hidden")];
     [ud setInteger:_style forKey:K(@"Style")];
     [ud setObject:DeskQuadOffsetsString(_quad) forKey:K(@"Quad")];
+    [ud setObject:[_vaultPlaces dictionary] forKey:K(@"VaultPlaces")];
+    [ud setBool:_vaultHidden forKey:K(@"VaultHidden")];
+    [ud setDouble:_vaultAlpha forKey:K(@"VaultAlpha")];
+    [ud setObject:DeskQuadOffsetsString(_vaultQuad) forKey:K(@"VaultQuad")];
+    [ud setInteger:_vaultStyle forKey:K(@"VaultStyle")];
 }
 
 - (BOOL)acquireSingleInstanceLock {
@@ -305,8 +425,337 @@ static NSImage *DeskStatusGlyph(void) {
     [self updateHud];
 }
 
-#pragma mark - 坐标胶囊与保存
+#pragma mark - 弹药库
 
+- (BOOL)vaultQuadActive { return !DeskQuadOffsetsIsZero(_vaultQuad) || _vaultEditing; }
+
+- (NSRect)vaultFrameForScreen:(NSScreen *)screen {
+    NSRect vf = screen.visibleFrame;
+    DeskPlace p = [_vaultPlaces effectivePlaceForScreen:screen];
+    CGFloat x = (p.corner == 1 || p.corner == 3) ? NSMaxX(vf) - kVaultViewWidth - p.dx
+                                                 : vf.origin.x + p.dx;
+    CGFloat y = (p.corner >= 2) ? vf.origin.y + p.dy : NSMaxY(vf) - kVaultViewHeight - p.dy;
+    NSSize card = NSMakeSize(kVaultViewWidth, kVaultViewHeight);
+    NSSize win = [DeskVaultView windowSizeWarped:[self vaultQuadActive]];
+    CGFloat padX = (win.width - card.width) / 2.0, padY = (win.height - card.height) / 2.0;
+    NSRect r = NSMakeRect(round(x - padX), round(y - padY), win.width, win.height);
+    if (!NSIntersectsRect(r, vf)) {
+        // 落出可视区（老记录来自大屏，切到小屏）就夹回右下角，别让组件摆到看不见的地方
+        DeskLog(@"弹药库档 %@ 落出可视区，夹回默认锚点（左下）", [_vaultPlaces keyForScreen:screen]);
+        p.corner = 2; p.dx = 16.0; p.dy = 16.0;
+        [_vaultPlaces setPlace:p forKey:[_vaultPlaces keyForScreen:screen]];
+        [self saveConfig];
+        r = NSMakeRect(round(vf.origin.x + p.dx - padX), round(vf.origin.y + p.dy - padY),
+                       win.width, win.height);
+    }
+    return r;
+}
+
+- (NSWindow *)makeVaultWindowForScreen:(NSScreen *)screen {
+    NSRect vf = [self vaultFrameForScreen:screen];
+    NSWindow *w = [[NSWindow alloc] initWithContentRect:vf
+                                              styleMask:NSWindowStyleMaskBorderless
+                                                backing:NSBackingStoreBuffered defer:NO];
+    [w setBackgroundColor:[NSColor clearColor]];
+    w.opaque = NO;
+    w.hasShadow = YES;
+    // 层级是硬约束，不是可调项：只贴桌面图标层（图标之下、壁纸之上）。
+    // 用户的应用窗口（含全屏窗口）一律在这层之上，所以任何模式下都盖不到窗口上。
+    w.level = kCGDesktopIconWindowLevel;
+    w.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces
+                         | NSWindowCollectionBehaviorStationary
+                         | NSWindowCollectionBehaviorIgnoresCycle;
+    w.movableByWindowBackground = NO;   // 拖动由 DeskVaultView 自己实现，见 onUserMove
+    w.animationBehavior = NSWindowAnimationBehaviorNone;
+    w.excludedFromWindowsMenu = YES;
+    // 不开这个，mouseMoved 根本不来，悬停高亮和按钮反馈全是死的
+    w.acceptsMouseMovedEvents = YES;
+    // 透明度落在窗口上：不进绘制逻辑，四档外观和变形态都自动吃这一档，
+    // 也不会把预烘的位图连同缓存一起作废
+    w.alphaValue = _vaultAlpha;
+
+    // 视图尺寸必须等于窗口尺寸：变形时窗口是撑出余量的画布，
+    // 视图还给组件本体的尺寸，四角投影就会画在画布外面
+    DeskVaultView *v = [[DeskVaultView alloc] initWithFrame:NSMakeRect(0, 0, NSWidth(vf), NSHeight(vf))];
+    v.quadOffsets = _vaultQuad;
+    v.editing = _vaultEditing;
+    v.style = (DeskStyle)_vaultStyle;
+    __weak typeof(self) weakSelf = self;
+    __weak NSWindow *weakW = w;
+    v.onHide = ^{ [weakSelf setVaultHidden:YES]; };
+    v.onQuadEdit = ^(DeskQuadOffsets q) { [weakSelf applyVaultQuad:q]; };
+    v.onGeometryChange = ^{ [weakSelf applyVaultFrames]; };
+    v.onUserMove = ^{ [weakSelf saveVaultPlaceInWindow:weakW]; };
+    v.onLog = ^(NSString *message) { DeskLog(@"弹药库 %@", message); };
+    v.onPreview = ^(NSString *path) { [weakSelf updateVaultPreviewWithPath:path forWindow:weakW]; };
+    w.contentView = v;
+    return w;
+}
+
+// 透明度只动窗口 alpha，不重建窗口：重建会打断正在拖的卡片和进行中的动画
+- (void)applyVaultAlpha {
+    for (NSWindow *w in _vaultWindows) w.alphaValue = _vaultAlpha;
+}
+
+#pragma mark - 被应用窗口盖住就临时让开
+
+// 桌面自己那些常驻 UI 都不该把组件收走：Dock、输入法候选窗、Mission Control 之类。
+// 它们层级不低，窗口框又常常是整屏——本机 Dock 报的是 layer=18、bounds 0,0 1512x945，
+// 只按层级筛根本分不出来（我原来把 20 当 Dock 的层级，它其实可以更矮）。
+// 于是点一次「显示桌面」：Code 窗口滑走 → 判定没盖住；Dock 冒出来 → 判定盖住，
+// 两秒一轮闪不停。所以这里按进程身份筛：Dock 的 bundle id 是固定的，
+// 系统 UI 则都是 NSApplicationActivationPolicyProhibited（没 Dock 图标、不能被激活的那种）。
+static BOOL VaultIsDesktopChrome(pid_t pid) {
+    static NSMutableDictionary<NSNumber *, NSNumber *> *cache;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        cache = [NSMutableDictionary dictionary];
+        NSRunningApplication *dock =
+            [NSRunningApplication runningApplicationsWithBundleIdentifier:@"com.apple.dock"].firstObject;
+        if (dock) cache[@(dock.processIdentifier)] = @YES;
+    });
+    NSNumber *hit = cache[@(pid)];
+    if (hit) return hit.boolValue;
+    NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
+    BOOL chrome = app == nil || app.activationPolicy == NSApplicationActivationPolicyProhibited;
+    cache[@(pid)] = @(chrome);
+    return chrome;
+}
+
+// 这块矩形（WindowServer 坐标，左上原点）有没有被用户的应用窗口盖住。
+// 层级那一步是便宜的粗筛：普通窗口 0、浮动窗 3、模态 8 都在 0~19 里，
+// 而菜单栏 24/25、弹窗 101、屏保 1000+ 和某些后台程序乱报的极大层级一律不算——
+// 它们要么不在屏幕上，要么是透明覆盖层，算进来只会让组件一直收不起来。
+// 露着不足 kVaultCoverShare 也不算：只压到一个角的话组件大体还能用，藏起来反而添乱。
+// dominant（可空）回填压住最多的那个窗口是谁，判定为没盖住时是 nil。
+// 盖住判定一旦飘起来，日志里有这句才查得到是哪个进程在捣鬼，
+// 光看「盖住/没盖住」的汇总等于蒙着眼睛调试。
+static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominant) {
+    if (dominant) *dominant = nil;
+    if (NSWidth(r) < 1 || NSHeight(r) < 1) return NO;
+    NSString *me = [[NSProcessInfo processInfo] processName];
+    CGFloat total = NSWidth(r) * NSHeight(r);
+    CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly
+                                                 | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
+    CGFloat hit = 0, top = 0;
+    NSString *topWho = nil;
+    for (CFIndex i = 0; i < CFArrayGetCount(list) && hit < total * kVaultCoverShare; i++) {
+        NSDictionary *d = (__bridge NSDictionary *)CFArrayGetValueAtIndex(list, i);
+        if ([d[@"kCGWindowOwnerName"] isEqualToString:me]) continue;
+        long layer = (long)[d[@"kCGWindowLayer"] integerValue];
+        if (layer < 0 || layer >= 20) continue;
+        if ([d[@"kCGWindowAlpha"] doubleValue] < 0.02) continue;   // 全透明覆盖层：看得见空气
+        if (VaultIsDesktopChrome((pid_t)[d[@"kCGWindowOwnerPID"] integerValue])) continue;
+        NSDictionary *b = d[@"kCGWindowBounds"];
+        if (![b isKindOfClass:[NSDictionary class]]) continue;
+        NSRect w = NSMakeRect([b[@"X"] doubleValue], [b[@"Y"] doubleValue],
+                              [b[@"Width"] doubleValue], [b[@"Height"] doubleValue]);
+        CGFloat area = NSWidth(NSIntersectionRect(w, r)) * NSHeight(NSIntersectionRect(w, r));
+        hit += area;
+        if (area > top) {
+            top = area;
+            topWho = [NSString stringWithFormat:@"%@ layer=%ld 压住 %.0f%%",
+                      d[@"kCGWindowOwnerName"], layer, area / total * 100.0];
+        }
+    }
+    CFRelease(list);
+    if (dominant) *dominant = hit >= total * kVaultCoverShare ? topWho : nil;
+    return hit >= total * kVaultCoverShare;
+}
+
+// 窗口层级不是事件，只能定时去问一次 WindowServer
+- (void)checkVaultCover:(NSTimer *)timer {
+    if (_vaultHidden) return;              // 用户自己收起的，不归这里管
+    for (NSWindow *w in _vaultWindows) {
+        NSView *v = w.contentView;
+        if ([v isKindOfClass:[DeskVaultView class]] && [(DeskVaultView *)v isDragging]) return;
+    }   // 正在拖窗口 / 拖卡片 / 接拖放：这时候把它收走等于从用户手里抢东西
+
+    CGFloat mainH = [NSScreen mainScreen].frame.size.height;
+    BOOL covered = NO;
+    NSString *who = nil;
+    for (NSWindow *w in _vaultWindows) {
+        NSRect f = w.frame;   // 视图是左下原点，WindowServer 是左上原点
+        NSString *one = nil;
+        if (VaultCoveredByAppWindow(NSMakeRect(f.origin.x, mainH - NSMaxY(f),
+                                               NSWidth(f), NSHeight(f)), &one)) {
+            covered = YES;
+            who = one;
+        }
+    }
+    if (covered) {
+        _vaultClear = 0;
+        _vaultCovered++;
+        if (_vaultCovered >= kVaultCoverStrikes) [self setVaultCoverHidden:YES reason:who];
+    } else {
+        _vaultCovered = 0;
+        _vaultClear++;
+        if (_vaultClear >= kVaultCoverClearTicks) [self setVaultCoverHidden:NO reason:nil];
+        // 没被盖住的时候，顺手把自己顶回本层最前：访达的桌面窗和组件是同一层
+        // （都是 kCGDesktopIconWindowLevel），它一旦排到组件前面——刷新桌面、切 Space、
+        // 换壁纸都会重排——整块桌面就归它，组件看着好好的却一点都点不动。
+        // 这一层没有「置顶」可设，只能定时顶回去。
+        if (!_vaultCoverHidden) {
+            for (NSWindow *w in _vaultWindows) [w orderFrontRegardless];
+        }
+    }
+}
+
+// 显示与否只有这一个出口：用户手动隐藏和「被盖住临时收起」都走它，
+// 两个原因叠在一起时用 AND 判断，谁都别偷偷把对方打开
+- (void)applyVaultVisibility {
+    BOOL show = !_vaultHidden && !_vaultCoverHidden;
+    for (NSWindow *w in _vaultWindows) {
+        if (show) [w orderFrontRegardless]; else [w orderOut:nil];
+    }
+}
+
+// reason 是把组件盖住的那个窗口，判定飘起来时全靠这句定位是谁在捣鬼
+- (void)setVaultCoverHidden:(BOOL)hidden reason:(NSString *)reason {
+    if (hidden == _vaultCoverHidden) return;
+    _vaultCoverHidden = hidden;
+    _vaultCovered = 0;
+    _vaultClear = 0;
+    [self applyVaultVisibility];
+    DeskLog(@"弹药库%@（被应用窗口盖住）%@", hidden ? @"临时收起" : @"重新出现", reason ?: @"");
+}
+
+- (void)chooseVaultAlpha:(id)sender {
+    _vaultAlpha = MIN(MAX([sender tag] / 100.0, kVaultAlphaMin), 1.0);
+    [self applyVaultAlpha];
+    [self saveConfig];
+    [self syncMenu];
+    DeskLog(@"弹药库透明度改为 %.0f%%", _vaultAlpha * 100.0);
+}
+
+// 拖完一个角就存盘并重算窗口尺寸（退出调角时四角归零，窗口要缩回去）
+- (void)applyVaultQuad:(DeskQuadOffsets)q {
+    _vaultQuad = q;
+    for (NSWindow *w in _vaultWindows) {
+        NSView *v = w.contentView;
+        if ([v isKindOfClass:[DeskVaultView class]]) ((DeskVaultView *)v).quadOffsets = q;
+    }
+    [self applyVaultFrames];
+    [self saveConfig];
+    DeskLog(@"弹药库角点已保存 %@", DeskQuadOffsetsString(q));
+}
+
+- (void)applyVaultFrames {
+    if (_applying) return;
+    _applying = YES;
+    NSUInteger i = 0;
+    for (NSScreen *screen in [NSScreen screens]) {
+        if (i >= _vaultWindows.count) break;
+        [_vaultWindows[i++] setFrame:[self vaultFrameForScreen:screen] display:YES animate:NO];
+    }
+    _applying = NO;
+}
+
+- (void)rebuildVaultWindows {
+    for (NSWindow *w in _vaultWindows) [w orderOut:nil];
+    _vaultWindows = [NSMutableArray array];
+    for (NSScreen *screen in [NSScreen screens]) {
+        NSWindow *w = [self makeVaultWindowForScreen:screen];
+        [_vaultWindows addObject:w];
+    }
+    [self applyVaultVisibility];   // 盖住检测可能已经判定该收起，不能在这里无条件上前台
+    DeskLog(@"弹药库建窗 %lu 个（库内 %lu 个文件夹），%@，层级=%ld（桌面图标层），透明度 %.0f%%",
+            (unsigned long)_vaultWindows.count,
+            (unsigned long)[DeskVault shared].items.count, _vaultHidden ? @"已隐藏" : @"已显示",
+            (long)kCGDesktopIconWindowLevel, _vaultAlpha * 100.0);
+}
+
+- (void)setVaultHidden:(BOOL)hidden {
+    _vaultHidden = hidden;
+    [self applyVaultVisibility];
+    [self saveConfig];
+    [self syncMenu];
+    DeskLog(@"弹药库切换：%@", hidden ? @"隐藏" : @"显示");
+}
+
+- (void)toggleVaultHidden:(id)sender { [self setVaultHidden:!_vaultHidden]; }
+
+// 弹药库没有"保存"按钮，拖完直接落档：摆位只可能来自 onUserMove，
+// 而它只在真鼠标拖拽时才触发，系统迁移窗口走不到这里
+- (void)saveVaultPlaceInWindow:(NSWindow *)w {
+    if (!w) return;
+    NSScreen *screen = w.screen ?: [NSScreen mainScreen];
+    NSRect vf = screen.visibleFrame;
+    // 变形时窗口比组件本体大出一圈余量，摆位描述的是"看得见的那块"，
+    // 直接拿窗口框算会整体偏出去半个余量
+    NSRect f = w.frame;
+    if (self.vaultQuadActive) {
+        f = NSInsetRect(f, (NSWidth(f) - kVaultViewWidth) / 2.0,
+                        (NSHeight(f) - kVaultViewHeight) / 2.0);
+    }
+    DeskPlace p;
+    p.corner = (NSMidY(f) > vf.origin.y + vf.size.height / 2.0 ? 0 : 2)
+             + (NSMidX(f) > vf.origin.x + vf.size.width / 2.0 ? 1 : 0);
+    p.dx = MAX(0, (p.corner == 1 || p.corner == 3) ? NSMaxX(vf) - NSMaxX(f) : f.origin.x - vf.origin.x);
+    p.dy = MAX(0, (p.corner >= 2) ? f.origin.y - vf.origin.y : NSMaxY(vf) - NSMaxY(f));
+    // 夹回可视区：整块拖出去就等于没了，存这种档位等于把组件弄丢
+    const CGFloat margin = 16.0;
+    CGFloat maxDx = MAX(margin, vf.size.width - kVaultViewWidth - margin);
+    CGFloat maxDy = MAX(margin, vf.size.height - kVaultViewHeight - margin);
+    p.dx = MIN(MAX(p.dx, margin), maxDx);
+    p.dy = MIN(MAX(p.dy, margin), maxDy);
+    if (NSIntersectsRect(f, vf)) {
+        NSString *key = [_vaultPlaces keyForScreen:screen];
+        [_vaultPlaces setPlace:p forKey:key];
+        [self saveConfig];
+        DeskLog(@"弹药库位置已保存 %@ → 角 %ld 偏移 %.0f,%.0f", key, (long)p.corner, p.dx, p.dy);
+    } else {
+        DeskLog(@"弹药库整块拖出可视区，不存档，原地拉回");
+        [w setFrame:[self vaultFrameForScreen:screen] display:YES];
+    }
+}
+
+// 动画按 30fps 推进，重画与否交给视图自己判断。空闲时只剩一道慢扫描带，
+// 降到 10fps 照样看不出差别，却不用一直占着 CPU
+- (void)startVaultTicking {
+    _lastVaultTick = [NSDate date];
+    _lastVaultStat = [NSDate date];
+    // 60fps 而不是 30fps：缓动曲线在 33ms 一步的表上只有两三个可见台阶，
+    // 看着就是"啪"地跳过去。16ms 一步才够画出连续的淡入淡出。
+    // 空闲时下面 vaultTick: 里的降频照旧，所以没人动组件时并不真的按 60fps 烧 CPU。
+    _vaultTick = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0 target:self
+                                                selector:@selector(vaultTick:) userInfo:nil repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:_vaultTick forMode:NSRunLoopCommonModes];
+    // 盖住检测单独一个慢表，不塞进 30fps 的动画表里：没人动组件的时候不该按帧频去问 WindowServer
+    _vaultCoverTimer = [NSTimer scheduledTimerWithTimeInterval:kVaultCoverInterval target:self
+                                                       selector:@selector(checkVaultCover:)
+                                                       userInfo:nil repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:_vaultCoverTimer forMode:NSRunLoopCommonModes];
+}
+
+- (void)vaultTick:(NSTimer *)t {
+    NSDate *now = [NSDate date];
+    double dt = [now timeIntervalSinceDate:_lastVaultTick];
+    _lastVaultTick = now;
+    if (dt <= 0 || dt > 1.0) dt = 1.0 / 60.0;   // 机器睡过就按一帧算，别让动画瞬移
+
+    BOOL busy = NO;
+    for (NSWindow *w in _vaultWindows) {
+        DeskVaultView *v = (DeskVaultView *)w.contentView;
+        if (![v isKindOfClass:[DeskVaultView class]]) continue;
+        [v tick:dt];
+        if ([v needsRedraw]) busy = YES;
+    }
+    if (!busy && (++_vaultFrameSkip % 3)) return;
+    for (NSWindow *w in _vaultWindows) {
+        DeskVaultView *v = (DeskVaultView *)w.contentView;
+        if ([v isKindOfClass:[DeskVaultView class]]) [v setNeedsDisplay:YES];
+    }
+
+    // 目录统计很贵（一个文件夹几万文件），入库退库时已经刷过，
+    // 这里只做兜底对账：五分钟扫一次，捡到用户在 Finder 里直接动过库的情况
+    if ([now timeIntervalSinceDate:_lastVaultStat] > 300.0) {
+        _lastVaultStat = now;
+        [[DeskVault shared] refreshStats];
+    }
+}
+
+#pragma mark - 坐标胶囊与保存
 // 读数不属于组件本身：单独一个小窗口贴在卡片下面，只有实底卡外观下出现
 - (void)updateHud {
     NSWindow *main = _windows.firstObject;
@@ -454,6 +903,7 @@ static NSImage *DeskStatusGlyph(void) {
 - (void)screenDidChange:(NSNotification *)note {
     DeskLog(@"屏幕参数变更，按存档重申位置");
     [self rebuildWindows];
+    [self rebuildVaultWindows];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ [self reassertFrames]; });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)),
@@ -475,48 +925,81 @@ static NSImage *DeskStatusGlyph(void) {
 
 #pragma mark - 菜单栏
 
+// 每个带动作的项都走这里，省得 target 写十遍
+static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL action) {
+    NSMenuItem *it = [menu addItemWithTitle:title action:action keyEquivalent:@""];
+    it.target = target;
+    return it;
+}
+
+// 两套外观标题一模一样、但各存各的档，所以必须是两个独立子菜单，不能共用一个
+- (NSMenu *)styleMenuForAction:(SEL)action title:(NSString *)title {
+    NSMenu *m = [[NSMenu alloc] initWithTitle:title];
+    NSArray *names = @[@"实底卡（采样模糊）", @"羽化暗角", @"无底浮字", @"HUD 贴窗"];
+    for (NSInteger i = 0; i < (NSInteger)names.count; i++) {
+        DeskAddAction(m, names[i], self, action).tag = i;
+    }
+    return m;
+}
+
+// 透明度按档给：档位落进 tag，选中哪档一眼可见，不用靠记忆
+- (NSMenu *)vaultAlphaMenu {
+    _vaultAlphaMenu = [[NSMenu alloc] initWithTitle:@"弹药库透明度"];
+    for (NSInteger pct = kVaultAlphaMaxPct; pct >= (NSInteger)(kVaultAlphaMin * 100.0);
+         pct -= kVaultAlphaStep) {
+        DeskAddAction(_vaultAlphaMenu, [NSString stringWithFormat:@"%ld%%", (long)pct],
+                      self, @selector(chooseVaultAlpha:)).tag = pct;
+    }
+    return _vaultAlphaMenu;
+}
+
+- (NSMenuItem *)addSubmenuTo:(NSMenu *)parent title:(NSString *)title menu:(NSMenu *)sub {
+    NSMenuItem *it = [parent addItemWithTitle:title action:NULL keyEquivalent:@""];
+    it.submenu = sub;
+    return it;
+}
+
+// 菜单按「作用在哪个组件上」分层：两块面板各占一组。
+// 调角和复位也各归各家——四角位移本来就是各存各的，
+// 共享一个开关反而会出现「只想调弹药库却把卡片也撑开了」
 - (void)buildStatusItem {
     _statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSSquareStatusItemLength];
     _statusItem.button.image = DeskStatusGlyph();
     _statusItem.button.toolTip = @"DeskBoard 桌面小组件";
 
     NSMenu *menu = [NSMenu new];
-    NSMenuItem *toggle = [menu addItemWithTitle:@"显示/隐藏"
-                                         action:@selector(toggleHidden:)
-                                  keyEquivalent:@""];
-    toggle.target = self;
 
-    NSMenuItem *styleItem = [menu addItemWithTitle:@"外观" action:NULL keyEquivalent:@""];
-    _styleMenu = [NSMenu new];
-    NSArray *styleNames = @[@"实底卡（采样模糊）", @"羽化暗角", @"无底浮字", @"HUD 贴窗"];
-    for (NSInteger i = 0; i < (NSInteger)styleNames.count; i++) {
-        NSMenuItem *it = [_styleMenu addItemWithTitle:styleNames[i]
-                                               action:@selector(chooseStyle:)
-                                        keyEquivalent:@""];
-        it.target = self;
-        it.tag = i;
-    }
-    styleItem.submenu = _styleMenu;
+    // ---- 组件 1：卡片面板（油价 / 系统状态 / 问候）----
+    NSMenu *card = [[NSMenu alloc] initWithTitle:@"卡片面板"];
+    _cardItem = DeskAddAction(card, @"显示 / 隐藏", self, @selector(toggleHidden:));
+    [self addSubmenuTo:card title:@"外观" menu:[self styleMenuForAction:@selector(chooseStyle:)
+                                                                  title:@"卡片外观"]];
+    [card addItem:NSMenuItem.separatorItem];
+    DeskAddAction(card, @"保存当前位置（拖完再点）", self, @selector(saveCurrentPlace:));
+    [card addItem:NSMenuItem.separatorItem];
+    _editItem = DeskAddAction(card, @"调角模式", self, @selector(toggleEditing:));
+    DeskAddAction(card, @"复位角点", self, @selector(resetQuad:));
+    [self addSubmenuTo:menu title:@"卡片面板（油价 · 系统状态 · 问候）" menu:card];
 
-    NSMenuItem *save = [menu addItemWithTitle:@"保存当前位置"
-                                       action:@selector(saveCurrentPlace:)
-                                keyEquivalent:@""];
-    save.target = self;
-    _editItem = [menu addItemWithTitle:@"调角模式" action:@selector(toggleEditing:) keyEquivalent:@""];
-    _editItem.target = self;
-    NSMenuItem *reset = [menu addItemWithTitle:@"复位角点" action:@selector(resetQuad:) keyEquivalent:@""];
-    reset.target = self;
-
-    NSMenuItem *reveal = [menu addItemWithTitle:@"打开数据目录…"
-                                         action:@selector(openDataDir:)
-                                  keyEquivalent:@""];
-    reveal.target = self;
+    // ---- 组件 2：弹药库 ARMORY（文件夹收纳）----
+    NSMenu *vault = [[NSMenu alloc] initWithTitle:@"弹药库 ARMORY"];
+    _vaultItem = DeskAddAction(vault, @"显示 / 隐藏", self, @selector(toggleVaultHidden:));
+    [self addSubmenuTo:vault title:@"外观"
+                  menu:[self styleMenuForAction:@selector(chooseVaultStyle:) title:@"弹药库外观"]];
+    [self addSubmenuTo:vault title:@"透明度" menu:[self vaultAlphaMenu]];
+    [vault addItem:NSMenuItem.separatorItem];
+    DeskAddAction(vault, @"选文件/文件夹入库…", self, @selector(pickItemsToIngest:));
+    [vault addItem:NSMenuItem.separatorItem];
+    _vaultEditItem = DeskAddAction(vault, @"调角模式", self, @selector(toggleVaultEditing:));
+    DeskAddAction(vault, @"复位角点", self, @selector(resetVaultQuad:));
+    [self addSubmenuTo:menu title:@"弹药库 ARMORY（文件夹收纳）" menu:vault];
 
     [menu addItem:NSMenuItem.separatorItem];
-    NSMenuItem *quit = [menu addItemWithTitle:@"退出 DeskBoard"
-                                       action:@selector(quit:)
-                                keyEquivalent:@"q"];
-    quit.target = self;
+
+    // ---- 全局 ----
+    DeskAddAction(menu, @"打开数据目录…", self, @selector(openDataDir:));
+    NSMenuItem *quit = DeskAddAction(menu, @"退出 DeskBoard", self, @selector(quit:));
+    quit.keyEquivalent = @"q";
 
     _statusItem.menu = menu;
     [self syncMenu];
@@ -530,7 +1013,29 @@ static NSImage *DeskStatusGlyph(void) {
     for (NSMenuItem *it in _styleMenu.itemArray) {
         it.state = it.tag == _style ? NSControlStateValueOn : NSControlStateValueOff;
     }
+    _cardItem.state = _hidden ? NSControlStateValueOff : NSControlStateValueOn;
     _editItem.state = _editing ? NSControlStateValueOn : NSControlStateValueOff;
+    _vaultItem.state = _vaultHidden ? NSControlStateValueOff : NSControlStateValueOn;
+    _vaultEditItem.state = _vaultEditing ? NSControlStateValueOn : NSControlStateValueOff;
+    for (NSMenuItem *it in _vaultStyleMenu.itemArray) {
+        it.state = it.tag == _vaultStyle ? NSControlStateValueOn : NSControlStateValueOff;
+    }
+    // 存档里的 alpha 只可能是 kVaultAlphaStep 的整数倍，四舍五入回整数再比对，避免浮点误差让勾跑掉
+    NSInteger alphaPct = (NSInteger)(_vaultAlpha * 100.0 + 0.5);
+    for (NSMenuItem *it in _vaultAlphaMenu.itemArray) {
+        it.state = it.tag == alphaPct ? NSControlStateValueOn : NSControlStateValueOff;
+    }
+}
+
+- (void)chooseVaultStyle:(id)sender {
+    _vaultStyle = [sender tag];
+    for (NSWindow *w in _vaultWindows) {
+        NSView *v = w.contentView;
+        if ([v isKindOfClass:[DeskVaultView class]]) ((DeskVaultView *)v).style = (DeskStyle)_vaultStyle;
+    }
+    [self saveConfig];
+    [self syncMenu];
+    DeskLog(@"弹药库外观改为 %ld", (long)_vaultStyle);
 }
 
 - (void)chooseStyle:(id)sender {
@@ -541,19 +1046,35 @@ static NSImage *DeskStatusGlyph(void) {
     DeskLog(@"外观改为 %ld", (long)_style);
 }
 
-// 开关调角会改变窗口外框（要留出拖角余量），所以整批重建而不是原地改
+// 开关调角会改变窗口外框（要留出拖角余量），所以整批重建而不是原地改。
+// 两块各切各的：卡片只重建卡片窗口，弹药库只重建弹药库窗口，互不牵连
 - (void)toggleEditing:(id)sender {
     _editing = !_editing;
     [self rebuildWindows];
     [self syncMenu];
-    DeskLog(@"调角模式：%@", _editing ? @"开" : @"关");
+    DeskLog(@"卡片调角模式：%@", _editing ? @"开" : @"关");
 }
 
+- (void)toggleVaultEditing:(id)sender {
+    _vaultEditing = !_vaultEditing;
+    [self rebuildVaultWindows];
+    [self syncMenu];
+    DeskLog(@"弹药库调角模式：%@", _vaultEditing ? @"开" : @"关");
+}
+
+// 四角位移本来各存各的，复位也就各归各的：
+// 只清 _quad 的话，弹药库拖出来的形变会留着不动
 - (void)resetQuad:(id)sender {
     _quad = DeskQuadOffsetsZero();
     [self applyQuadFromCard:_quad];
     [self rebuildWindows];
-    DeskLog(@"角点已复位");
+    DeskLog(@"卡片角点已复位");
+}
+
+- (void)resetVaultQuad:(id)sender {
+    _vaultQuad = DeskQuadOffsetsZero();
+    [self applyVaultQuad:_vaultQuad];
+    DeskLog(@"弹药库角点已复位");
 }
 
 - (void)toggleHidden:(id)sender {
@@ -567,6 +1088,27 @@ static NSImage *DeskStatusGlyph(void) {
     DeskLog(@"切换显示：%@", _hidden ? @"隐藏" : @"显示");
 }
 
+// 访达把文件夹拖到组件上的投递路径会因窗口层级、桌面图标层机制而失效，
+// 所以再给一条完全不经拖放的入口：直接开访达选文件夹。
+- (void)pickItemsToIngest:(id)sender {
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    // 文件和文件夹都让选：能不能收由数据层的白名单说了算（vault.m 的
+    // VaultItemKindForPath），面板只负责让人挑，挑中的不合规的那些会被静默丢掉
+    panel.canChooseFiles = YES;
+    panel.canChooseDirectories = YES;
+    panel.allowsMultipleSelection = YES;
+    panel.resolvesAliases = NO;   // 别名收进来只会变成一个点开是空的"假文件夹"，不放行
+    panel.prompt = @"入库";
+    panel.message = @"选中的文件夹和常见文件会搬进弹药库（之后可以从组件里退回桌面）";
+    if ([panel runModal] != NSModalResponseOK) return;
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+    for (NSURL *u in panel.URLs) if (u.path) [paths addObject:u.path];
+    NSUInteger n = [[DeskVault shared] ingestPaths:paths];
+    DeskLog(@"弹药库 选单入库 %lu 个（挑了 %lu 个）", (unsigned long)n,
+            (unsigned long)panel.URLs.count);
+    [self syncMenu];
+}
+
 - (void)openDataDir:(id)sender {
     [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[self dataDir]]];
 }
@@ -575,10 +1117,71 @@ static NSImage *DeskStatusGlyph(void) {
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender { return NO; }
 
+#pragma mark - 悬停预览浮窗
+
+// 预览窗的内容视图。普通 NSView（不翻转），所以 NSImage 直接 drawInRect: 就是正的，
+// 不需要像组件内部那样手动翻坐标空间 —— 那边是因为视图是翻转坐标才要翻回来。
+
+// path 为 nil 就收起预览窗
+- (void)updateVaultPreviewWithPath:(NSString *)path forWindow:(NSWindow *)owner {
+    if (path.length == 0 || _vaultHidden || _vaultCoverHidden) {
+        [_vaultPreviewWindow orderOut:nil];
+        return;
+    }
+    // 优先用 720px 的大图；还没解好就先拿 160px 的小图顶着，绝不留空窗
+    NSImage *img = VaultThumbPreview(path) ?: VaultThumbnail(path);
+    if (!img) return;
+
+    NSScreen *scr = owner.screen ?: [NSScreen mainScreen];
+    NSRect vis = scr.visibleFrame;
+    const CGFloat pad = 8.0, gap = 6.0;
+    const CGFloat maxW = MIN(420.0, NSWidth(vis) - 24.0);
+    const CGFloat maxH = MIN(280.0, NSHeight(vis) - 24.0);
+    NSSize ts = img.size;
+    CGFloat s = MIN(maxW / ts.width, maxH / ts.height);
+    CGFloat w = MAX(120.0, ts.width * s) + pad * 2;
+    CGFloat h = MAX(90.0, ts.height * s) + pad * 2;
+
+    // 摆位：正对弹药库、浮在它上边；顶到屏幕上沿就改挂到下边，横向夹在可视区内
+    NSRect comp = owner.frame;
+    CGFloat x = MAX(NSMinX(vis) + 8.0, MIN(NSMidX(comp) - w / 2.0, NSMaxX(vis) - w - 8.0));
+    CGFloat y = NSMaxY(comp) + gap;
+    if (y + h > NSMaxY(vis) - 8.0) y = MAX(NSMinX(vis) + 8.0, NSMinY(comp) - h - gap);
+    NSRect fr = NSMakeRect(round(x), round(y), round(w), round(h));
+
+    if (!_vaultPreviewWindow) {
+        _vaultPreviewWindow = [[NSWindow alloc] initWithContentRect:fr
+                                                          styleMask:NSWindowStyleMaskBorderless
+                                                            backing:NSBackingStoreBuffered
+                                                              defer:NO];
+        [_vaultPreviewWindow setBackgroundColor:[NSColor clearColor]];
+        _vaultPreviewWindow.opaque = NO;
+        _vaultPreviewWindow.hasShadow = YES;
+        _vaultPreviewWindow.releasedWhenClosed = NO;
+        // 预览要真的看得见就得浮在应用窗口之上 —— 组件本身永远不破"永不浮在用户窗口上方"，
+        // 这块窗是例外：它点击穿透、不抢激活、只在鼠标停在图片卡上时存在、移开即消失
+        _vaultPreviewWindow.level = NSFloatingWindowLevel;
+        _vaultPreviewWindow.ignoresMouseEvents = YES;   // 不点穿就会挡住下面的卡片
+        _vaultPreviewWindow.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces
+                                               | NSWindowCollectionBehaviorStationary
+                                               | NSWindowCollectionBehaviorIgnoresCycle;
+    }
+    DeskVaultPreviewView *cv = (DeskVaultPreviewView *)_vaultPreviewWindow.contentView;
+    if (![cv isKindOfClass:[DeskVaultPreviewView class]]) {
+        cv = [[DeskVaultPreviewView alloc] initWithFrame:NSMakeRect(0, 0, NSWidth(fr), NSHeight(fr))];
+        _vaultPreviewWindow.contentView = cv;
+    }
+    cv.frame = NSMakeRect(0, 0, NSWidth(fr), NSHeight(fr));
+    cv.image = img;
+    cv.tint = VaultTintForKind(VaultItemImage);
+    if (!NSEqualRects(_vaultPreviewWindow.frame, fr)) [_vaultPreviewWindow setFrame:fr display:YES];
+    [_vaultPreviewWindow orderFrontRegardless];
+}
 @end
 
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
+        // 必须在起 UI 之前处理完：写完就退出，不能让它占着单例锁再开一个实例
         DeskBoardApp *delegate = [DeskBoardApp new];
         NSApp = [NSApplication sharedApplication];
         [NSApp setDelegate:delegate];

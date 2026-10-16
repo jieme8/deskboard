@@ -5,6 +5,9 @@
 #import "places.h"
 #import "sysmon.h"
 #import "backdrop.h"
+#import "vault.h"
+#import "vault_view.h"
+
 
 static int gFail = 0;
 static int gPass = 0;
@@ -123,6 +126,45 @@ static long InkOf(NSView *v) {
     return ink;
 }
 
+// 两张画面逐点比，返回"差得超过阈值"的采样点占比。
+// 位图重烘带零星抖动，靠字节相等判"变了"是不行的；这个比例既能扛住抖动，
+// 又能把整套外观切换那种整片变天量出来。
+static double PixelDiffRatio(NSView *a, NSView *b) {
+    NSRect r = a.bounds;
+    NSBitmapImageRep *ra = [a bitmapImageRepForCachingDisplayInRect:r];
+    [a cacheDisplayInRect:r toBitmapImageRep:ra];
+    NSBitmapImageRep *rb = [b bitmapImageRepForCachingDisplayInRect:r];
+    [b cacheDisplayInRect:r toBitmapImageRep:rb];
+    long total = 0, diff = 0;
+    for (NSInteger y = 0; y < ra.pixelsHigh; y += 3) {
+        for (NSInteger x = 0; x < ra.pixelsWide; x += 3) {
+            NSColor *ca = [ra colorAtX:x y:y];
+            NSColor *cb = [rb colorAtX:x y:y];
+            total++;
+            if (fabs(ca.redComponent - cb.redComponent) > 0.10 ||
+                fabs(ca.greenComponent - cb.greenComponent) > 0.10 ||
+                fabs(ca.blueComponent - cb.blueComponent) > 0.10 ||
+                fabs(ca.alphaComponent - cb.alphaComponent) > 0.10) diff++;
+        }
+    }
+    return total ? (double)diff / (double)total : 0.0;
+}
+
+// 弹药库断言用的假文件夹：只塞字段，不碰真实文件系统
+static DeskVaultItem *FakeVaultItem(NSString *name, long long bytes, NSUInteger files,
+                                    double seed, double ago) {
+    DeskVaultItem *it = [DeskVaultItem new];
+    it.name = name;
+    it.sourceName = name;
+    it.storedName = name;
+    it.seed = seed;
+    it.byteSize = bytes;
+    it.fileCount = files;
+    it.scanned = YES;
+    it.ingestedAt = (long long)([[NSDate date] timeIntervalSince1970] - ago);
+    return it;
+}
+
 static double MeanLuma(NSImage *img) {
     NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithData:[img TIFFRepresentation]];
     if (!rep) return -1;
@@ -164,12 +206,30 @@ int main(int argc, const char *argv[]) {
 
         printf("油价数据（mock/mock.json，由 ./tools/refresh.py 刷新）\n");
         DeskModel *oil = LoadMock(root, @"mock.json");
+        // 期望值一律从这份数据自己算，别把日期和"还剩几天"钉死：
+        // 这两条本来只想验"日期和倒计时并进同一行"这个结构，
+        // 钉死具体值之后，每次 refresh.py 刷了新数据都会把它们打破——
+        // 那是数据变了，不是代码坏了。口径跟 model.m 的 DaysText 保持一致。
+        NSData *mockData = [NSData dataWithContentsOfFile:[[root stringByAppendingPathComponent:@"mock"]
+                                                            stringByAppendingPathComponent:@"mock.json"]];
+        id parsed = mockData ? [NSJSONSerialization JSONObjectWithData:mockData options:0 error:nil] : nil;
+        NSDictionary *mockJSON = [parsed isKindOfClass:[NSDictionary class]] ? parsed : @{};
+        id nextVal = mockJSON[@"nextDate"];
+        NSString *mockNext = [nextVal isKindOfClass:[NSString class]] ? nextVal : nil;
+        NSString *mockCountdown = nil;
+        id daysVal = mockJSON[@"daysLeft"];
+        if ([daysVal isKindOfClass:[NSNumber class]]) {
+            NSInteger d = [daysVal integerValue];
+            mockCountdown = d < 0 ? @"已过调价日" : (d == 0 ? @"今天"
+                                                          : [NSString stringWithFormat:@"还剩 %ld 天", (long)d]);
+        }
         Say([oil.title isEqualToString:@"上海 · 92号汽油"], @"标题= %@", oil.title);
         Say([oil.unit isEqualToString:@"元/升"], @"单位= %@", oil.unit);
         double priceVal = [oil.price doubleValue];
         Say(priceVal > 5.0 && priceVal < 12.0, @"上海 92 号现价= %@ 元/升", oil.price);
-        Say([oil.infoLine containsString:@"10月16日"], @"油价说明行= %@", oil.infoLine);
-        Say([oil.infoLine containsString:@"还剩 4 天"], @"倒计时并进同一行= %@", oil.infoLine);
+        Say(mockNext.length && [oil.infoLine containsString:mockNext], @"油价说明行= %@", oil.infoLine);
+        Say(mockCountdown.length && [oil.infoLine containsString:mockCountdown],
+            @"倒计时并进同一行= %@", oil.infoLine);
         Say(![oil.infoLine containsString:@"预计"] && ![oil.infoLine containsString:@"变化率"],
             @"预计与参考原油变化率已去掉");
         Say([oil.footer hasPrefix:@"更新于"], @"页脚= %@", oil.footer);
@@ -442,6 +502,50 @@ int main(int argc, const char *argv[]) {
             @"放弃待保存后不会污染存档（回到默认 角%ld 距%.0f/%.0f）",
             (long)dropped.corner, dropped.dx, dropped.dy);
 
+        printf("\n变形态下换外观必须真的换（弹药库位图是从素材视图烘的）\n");
+        // 进调角后整张组件来自 _flatSource 烘出来的 _flatRep。样式没同步到素材视图的话，
+        // 不管选哪种外观，画面都停在素材自己的默认样式 —— 菜单点了像没反应。
+        {
+            NSArray *fake = @[FakeVaultItem(@"项目资料", 2.4e9, 1284, 0.13, 3600),
+                              FakeVaultItem(@"设计稿", 843e6, 312, 0.71, 86400),
+                              FakeVaultItem(@"临时", 0, 0, 0.05, 600)];
+            DeskQuadOffsets vq = DeskQuadOffsetsZero();
+            vq.tl = NSMakeSize(26, -20); vq.tr = NSMakeSize(-14, 8);
+            vq.br = NSMakeSize(-6, 14);  vq.bl = NSMakeSize(20, -26);
+            // 变形态的画布比组件本体大一圈，尺寸给错会把投影画到画布外
+            NSRect canvas = NSMakeRect(0, 0, kVaultViewWidth + 120, kVaultViewHeight + 120);
+
+            // 故意不开 editing：调角时四角手柄会叠在位图之上，而手柄样式跟着 gStyle 走，
+            // 位图再怎么错，四张图照样不同——那样这条断言就废了。
+            // 非零四角同样走 _flatRep 那条路径，正是要验的那条。
+            DeskVaultView *(^mk)(DeskStyle) = ^DeskVaultView *(DeskStyle st) {
+                DeskVaultView *v = [[DeskVaultView alloc] initWithItems:fake];
+                [v setStandInScreenRect:NSMakeRect(150, 60, kVaultViewWidth, kVaultViewHeight)];
+                v.style = st;               // 先定样式再变形，和菜单换外观的顺序一致
+                v.quadOffsets = vq;        // 这一步才建出素材视图
+                v.frame = canvas;
+                return v;
+            };
+
+            // 底噪：同一份设置连渲两次。只差几个像素，所以不能拿"字节相同"当判据
+            DeskVaultView *ref = mk(DeskStylePlate);
+            DeskVaultView *ref2 = mk(DeskStylePlate);
+            double noise = PixelDiffRatio(ref, ref2);
+            Say(noise < 0.02, @"同设置两次渲染只差 %.2f%%（重烘抖动，当作底噪）", noise * 100.0);
+
+            // 两两互比：任意两种外观都得画得不一样。样式没同步到素材视图的话，
+            // 这四张全是同一张图，下面六条会一起塌成 0%
+            NSMutableArray<DeskVaultView *> *all = [NSMutableArray array];
+            for (NSInteger st = 0; st <= DeskStyleHUD; st++) [all addObject:mk((DeskStyle)st)];
+            for (NSUInteger i = 0; i < all.count; i++) {
+                for (NSUInteger j = i + 1; j < all.count; j++) {
+                    double d = PixelDiffRatio(all[i], all[j]);
+                    Say(d > 0.02, @"弹药库 变形态下风格 %lu 与 %lu 差 %.2f%%（外观真的切过去了）",
+                        (unsigned long)i, (unsigned long)j, d * 100.0);
+                }
+            }
+        }
+
         printf("\n每种风格都必须真的把文字挂上去（防止又出现'只剩底板没字'）\n");
         for (NSInteger st = 0; st <= DeskStyleHUD; st++) {
             DeskCardView *c = [[DeskCardView alloc] initWithModel:withStats style:(DeskStyle)st];
@@ -504,6 +608,36 @@ int main(int argc, const char *argv[]) {
         double delta = MaxPixelDelta(bg, far);
         Say(delta > 0.05, @"两个位置采到的壁纸确实不同（最优点 RGB 差 %.3f，亮度 %.3f vs %.3f）",
             delta, dA, dB);
+
+        // 拖动窗口的位移算式
+        // 出过事故：视图是翻转坐标（左上原点），屏幕坐标是左下原点，
+        // 曾经把 view 坐标和屏幕坐标直接相减，组件在拖动第一帧就瞬移到按下点的坐标。
+        // 这里钉死"光标走多远，窗口就走多远"这条不变量。
+        printf("\n弹药库拖动位移\n");
+        NSRect dStart = NSMakeRect(171, 344, 432, 294);
+        NSPoint dMouse0 = NSMakePoint(396, 617);
+        NSRect d0 = VaultDragFrame(dStart, dMouse0, dMouse0);
+        NSRect d1 = VaultDragFrame(dStart, dMouse0, NSMakePoint(489, 633));
+        NSRect d2 = VaultDragFrame(dStart, dMouse0, NSMakePoint(104, 201));
+        printf("  窗口起点(171,344)，鼠标按下(396,617)\n");
+        Say(NSEqualPoints(d0.origin, dStart.origin), @"光标没动，窗口也不动");
+        Say(fabs((d1.origin.x - dStart.origin.x) - 93) < 0.5 &&
+            fabs((d1.origin.y - dStart.origin.y) - 16) < 0.5,
+            @"光标右移 93pt 上移 16pt，窗口平移 (%.0f,%.0f)",
+            d1.origin.x - dStart.origin.x, d1.origin.y - dStart.origin.y);
+        Say(fabs((d2.origin.x - dStart.origin.x) + 292) < 0.5 &&
+            fabs((d2.origin.y - dStart.origin.y) + 416) < 0.5,
+            @"往回拖按同样的增量算，不累积漂移 (%.0f,%.0f)",
+            d2.origin.x - dStart.origin.x, d2.origin.y - dStart.origin.y);
+        // 视图是翻转的：按下点(view 225,21) 在屏幕上比窗口原点低 (294-21)，
+        // 拖动后它必须仍停在光标正下方 —— 这条正是当初写错的地方
+        CGFloat pressX = 225, pressFromTop = 21;
+        CGFloat px0 = dStart.origin.x + pressX;
+        CGFloat py0 = dStart.origin.y + (294 - pressFromTop);
+        CGFloat px1 = d1.origin.x + pressX;
+        CGFloat py1 = d1.origin.y + (294 - pressFromTop);
+        Say(fabs((px1 - px0) - 93) < 0.5 && fabs((py1 - py0) - 16) < 0.5,
+            @"按下点跟着光标一起走，没有和光标错开");
 
         printf("\n%d 项通过，%d 项失败\n", gPass, gFail);
         return gFail == 0 ? 0 : 1;

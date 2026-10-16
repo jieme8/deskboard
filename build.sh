@@ -31,11 +31,11 @@ pick_sdk() {
     [ -n "$sdk" ] && [ -d "$sdk" ] || continue
     printf '#include <CoreFoundation/CoreFoundation.h>\nint main(void){return (int)CFEqual(0,0);}\n' > "$test"
     if clang -isysroot "$sdk" -framework CoreFoundation -o "${test}.bin" "$test" >/dev/null 2>&1; then
-      rm -f "$test" "${test}.bin"
+      rm -f "$test" "${test}.bin" >/dev/null 2>&1 || true
       echo "$sdk"
       return 0
     fi
-    rm -f "$test" "${test}.bin"
+    rm -f "$test" "${test}.bin" >/dev/null 2>&1 || true
   done
   echo ""
   return 1
@@ -53,8 +53,10 @@ BASE=( -fobjc-arc -mmacosx-version-min=13.0 -isysroot "$SDK"
 
 build_tools() {
   mkdir -p "$BUILD_DIR/tools"
-  clang "${BASE[@]}" -framework AppKit -framework IOKit -framework CoreImage -framework SystemConfiguration -framework CoreWLAN -framework QuartzCore \
-        -o "$BUILD_DIR/tools/verify" tools/verify.m model.m panel_view.m places.m sysmon.m hidtemp.m backdrop.m quad.m
+  clang "${BASE[@]}" -framework AppKit -framework IOKit -framework CoreImage -framework ImageIO -framework SystemConfiguration -framework CoreWLAN -framework QuartzCore \
+        -o "$BUILD_DIR/tools/verify" tools/verify.m model.m panel_view.m places.m sysmon.m hidtemp.m backdrop.m quad.m vault.m vault_art.m vault_view.m
+  clang "${BASE[@]}" -framework AppKit -framework CoreGraphics -framework CoreImage -framework ImageIO -framework QuartzCore \
+        -o "$BUILD_DIR/tools/verify_thumb" tools/verify_thumb.m vault.m vault_art.m vault_view.m backdrop.m quad.m
   clang "${BASE[@]}" -framework AppKit \
         -o "$BUILD_DIR/tools/dump_window" tools/dump_window.m places.m
   clang "${BASE[@]}" -framework AppKit \
@@ -63,10 +65,12 @@ build_tools() {
         -o "$BUILD_DIR/tools/probe_sensors" tools/probe_sensors.m smc.m
   clang "${BASE[@]}" -framework IOKit \
         -o "$BUILD_DIR/tools/probe_temp" tools/probe_temp.m
+  clang "${BASE[@]}" -framework AppKit -framework CoreImage -framework ImageIO -framework QuartzCore -framework SystemConfiguration -framework CoreWLAN -framework IOKit \
+        -o "$BUILD_DIR/tools/preview_vault" tools/preview_vault.m vault.m vault_art.m vault_view.m backdrop.m quad.m
   clang "${BASE[@]}" -framework AppKit \
         -o "$BUILD_DIR/tools/mkicon" tools/mkicon.m
-  clang "${BASE[@]}" -framework AppKit -framework CoreImage -framework IOKit -framework SystemConfiguration -framework CoreWLAN -framework QuartzCore \
-        -o "$BUILD_DIR/tools/preview" tools/preview.m model.m panel_view.m sysmon.m hidtemp.m backdrop.m quad.m
+  clang "${BASE[@]}" -framework AppKit -framework CoreImage -framework ImageIO -framework IOKit -framework SystemConfiguration -framework CoreWLAN -framework QuartzCore \
+        -o "$BUILD_DIR/tools/preview" tools/preview.m model.m panel_view.m sysmon.m hidtemp.m backdrop.m quad.m vault.m vault_art.m vault_view.m
 }
 
 # 图标母版由代码画（tools/mkicon.m），这里只负责铺 iconset 的 10 个尺寸并打成 .icns。
@@ -89,16 +93,18 @@ case "${1:-}" in
   --tools)
     echo "→ 编译校验工具"
     build_tools
-    echo "→ 产物：build/tools/{verify,dump_window,palette,preview,probe_sensors}"
+    echo "→ 产物：build/tools/{verify,dump_window,palette,preview,preview_vault,probe_sensors}"
     exit 0
     ;;
   --check)
     echo "→ 严格编译检查（-Wall -Werror，警告即失败）"
-    clang -fsyntax-only "${BASE[@]}" main.m model.m panel_view.m places.m hud.m sysmon.m hidtemp.m backdrop.m quad.m
+    clang -fsyntax-only "${BASE[@]}" main.m model.m oilfeed.m panel_view.m places.m hud.m sysmon.m hidtemp.m backdrop.m quad.m vault.m vault_art.m vault_view.m
     echo "→ 编译校验工具"
     build_tools
     echo "→ 模型与布局断言"
     "$BUILD_DIR/tools/verify" "$(pwd -P)"
+    echo "→ 缩略图断言"
+    "$BUILD_DIR/tools/verify_thumb"
     exit 0
     ;;
 esac
@@ -110,8 +116,8 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 echo "→ 编译"
 clang "${BASE[@]}" \
-      -framework AppKit -framework CoreGraphics -framework IOKit -framework CoreImage -framework SystemConfiguration -framework CoreWLAN -framework QuartzCore \
-      -o "$APP/Contents/MacOS/$APP_NAME" main.m model.m panel_view.m places.m hud.m sysmon.m hidtemp.m backdrop.m quad.m
+      -framework AppKit -framework CoreGraphics -framework IOKit -framework CoreImage -framework ImageIO -framework SystemConfiguration -framework CoreWLAN -framework QuartzCore \
+      -o "$APP/Contents/MacOS/$APP_NAME" main.m model.m oilfeed.m panel_view.m places.m hud.m sysmon.m hidtemp.m backdrop.m quad.m vault.m vault_art.m vault_view.m
 
 echo "→ 生成 App 图标"
 build_tools

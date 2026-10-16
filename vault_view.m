@@ -350,6 +350,14 @@ static BOOL VaultEaseDone(double x, double target, double eps) {
     return fabs(target - x) < eps;
 }
 
+// 任何一次"我要重画"都顺手把动画表叫回来。空闲时外面把 60fps 的表停了，
+// 靠这一个钩子恢复：比在每个交互入口各挂一遍省事，也不会挂漏一个就出现
+// "鼠标悬停没反应"这种极难查的毛病。
+- (void)setNeedsDisplay:(BOOL)flag {
+    [super setNeedsDisplay:flag];
+    if (flag && self.onNeedFrames) self.onNeedFrames();
+}
+
 - (void)tick:(double)dt {
     _sweepT += dt;
     [self maybeRefreshFlat:dt];
@@ -420,6 +428,9 @@ static BOOL VaultEaseDone(double x, double target, double eps) {
 
 - (double)currentSweep {
     if (self.isWarped) return -1.0;   // 变形时整块已经烘成位图，扫描带动不了只会逼着重烘
+    // 扫描带是"你在用它"的时候才活的装饰。它常年跑，就等于逼着组件常年重绘 ——
+    // 实测 DeskBoard 因此一直按 20fps 全量重画五张卡片，能耗影响冲到 88.5
+    if (![self needsRedraw] && ![self isDragging]) return -1.0;
     if (_sweepT >= kSweepRun) return -1.0;   // 空档期不画
     return -0.15 + (_sweepT / kSweepRun) * 1.3;
 }

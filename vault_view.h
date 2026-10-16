@@ -27,6 +27,9 @@ NS_ASSUME_NONNULL_BEGIN
 // 由外面开一块独立浮窗来接。path 为 nil 表示收起。
 @property (nonatomic, copy) void (^onPreview)(NSString *_Nullable path);
 @property (nonatomic, copy) void (^onLog)(NSString *message);
+// 组件要开始动起来了（悬停、拖放、入库动画），外面据此把动画驱动表叫回来。
+// 空闲时那张 60fps 的表是停着的，没人叫它就永远不动
+@property (nonatomic, copy) void (^onNeedFrames)(void);
 
 // 拖动时的窗口位移。单独抽成函数是因为这里出过事故：
 // 视图是翻转坐标（左上原点），屏幕坐标是左下原点，

@@ -8,6 +8,11 @@
 #import "vault.h"
 #import "vault_view.h"
 
+// vault_view.m 里的私有方法，断言只读它算出来的扫描带位置（-1 = 这一帧不画扫描带）
+@interface DeskVaultView (VerifyEnergy)
+- (double)currentSweep;
+@end
+
 
 static int gFail = 0;
 static int gPass = 0;
@@ -638,6 +643,29 @@ int main(int argc, const char *argv[]) {
         CGFloat py1 = d1.origin.y + (294 - pressFromTop);
         Say(fabs((px1 - px0) - 93) < 0.5 && fabs((py1 - py0) - 16) < 0.5,
             @"按下点跟着光标一起走，没有和光标错开");
+
+        printf("\n弹药库动画循环：该停就停、该醒就醒（能耗回归）\n");
+        // 实测过反面：这张表常开 + "空闲也每 3 帧重画"，DeskBoard 稳定 39% CPU、
+        // 活动监视器能耗影响 88.5。下面四条守住"没得动就一帧都不画"这件事。
+        NSArray *evItems = @[FakeVaultItem(@"能耗探针", 1.2e9, 42, 0.31, 0),
+                              FakeVaultItem(@"两个卡片", 8.0e8, 17, 0.62, 0)];
+        DeskVaultView *ev = [[DeskVaultView alloc] initWithItems:evItems];
+        [ev setStandInScreenRect:NSMakeRect(150, 60, kVaultViewWidth, kVaultViewHeight)];
+        ev.style = DeskStylePlate;
+        __block int wakes = 0;
+        ev.onNeedFrames = ^{ wakes++; };
+        Say([ev needsRedraw], @"刚入库的卡片动画在跑，此时不许停表");
+        Say([ev currentSweep] > -1.0, @"有动画在跑时扫描带才活（它绝不能再单独把组件吊着）");
+        int settled = -1;
+        for (int i = 1; i <= 600; i++) { [ev tick:1.0 / 60.0]; if (![ev needsRedraw]) { settled = i; break; } }
+        Say(settled > 0 && settled <= 90, @"入库缓动在 %d 帧（%.2fs）内收敛到终态", settled, settled / 60.0);
+        int afterSettle = wakes;
+        for (int i = 0; i < 120; i++) [ev tick:1.0 / 60.0];   // 静置两秒
+        Say(![ev needsRedraw] && [ev currentSweep] < -0.5,
+            @"静置 2 秒后仍然一帧都不欠：扫描带已关、没有东西在动");
+        Say(wakes == afterSettle, @"静置期间没人自己把表叫回来（唤醒 %d→%d 次）", afterSettle, wakes);
+        [ev applyPreviewHoverCard:0 dock:-1 dropHot:0.5 dropCount:0 scroll:0];
+        Say([ev needsRedraw] && [ev currentSweep] > -1.0, @"鼠标一悬停，动画立刻重新有活干");
 
         printf("\n%d 项通过，%d 项失败\n", gPass, gFail);
         return gFail == 0 ? 0 : 1;

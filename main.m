@@ -138,6 +138,11 @@ static const NSInteger kVaultAlphaStep = 5;
 static const NSTimeInterval kVaultCoverInterval = 0.6;
 static const NSInteger kVaultCoverStrikes = 3;
 static const NSInteger kVaultCoverClearTicks = 1;
+// 一次切换之后至少隔这么久才允许反向。日志里出现过 2 秒内「收起→出现→收起」的横跳：
+// 每跳一次就重启一遍入库动画，把刚停下来的动画表又叫回 60fps
+static const NSTimeInterval kVaultCoverDwell = 3.0;
+// 没被盖住时把自己顶回本层最前的频率（按检测次数计），每 tick 都顶一次纯属白问 WindowServer
+static const NSUInteger kVaultRaiseEveryTicks = 5;
 // 露着的比例低于这个数才算被盖住：只压到一个角的话组件大体还能用，藏起来反而添乱
 static const CGFloat kVaultCoverShare = 0.25;
 
@@ -185,9 +190,11 @@ static const CGFloat kVaultCoverShare = 0.25;
     NSInteger _vaultCovered;      // 连续几次检出被盖住（防一掠而过导致闪一下）
     NSInteger _vaultClear;        // 连续几次检出空出来了
     BOOL _vaultCoverHidden;       // 因被盖住而临时收起，和用户手动隐藏分开记
-    NSTimer *_vaultTick;        // 动画驱动，和油价那个 2 秒轮询分开
+    NSTimer *_vaultTick;        // 动画驱动，只在真有事做的时候挂着
+    NSTimer *_vaultWatchdog;    // 空闲停表后的低频看门狗，负责把表叫回来
     NSDate *_lastVaultTick;
-    NSUInteger _vaultFrameSkip; // 空闲时降频：慢扫描带 10fps 就够，省得白烧 CPU
+    NSDate *_vaultCoverToggledAt;  // 上一次"收起/出现"切换的时刻，防来回横跳
+    NSUInteger _vaultCoverTicks;   // 盖住检测的计数，用来顺手给置顶降频
     NSDate *_lastVaultStat;
 
 }
@@ -488,6 +495,8 @@ static const CGFloat kVaultCoverShare = 0.25;
     v.onUserMove = ^{ [weakSelf saveVaultPlaceInWindow:weakW]; };
     v.onLog = ^(NSString *message) { DeskLog(@"弹药库 %@", message); };
     v.onPreview = ^(NSString *path) { [weakSelf updateVaultPreviewWithPath:path forWindow:weakW]; };
+    // 组件自己说"我要动了"，就把动画表叫回来。空闲停表之后，全靠这一条恢复
+    v.onNeedFrames = ^{ [weakSelf resumeVaultTicking]; };
     w.contentView = v;
     return w;
 }
@@ -583,19 +592,23 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
             who = one;
         }
     }
+    // 横跳防护：刚切过一次状态，短时间内不许反向
+    BOOL dwellPassed = !_vaultCoverToggledAt
+        || [[NSDate date] timeIntervalSinceDate:_vaultCoverToggledAt] >= kVaultCoverDwell;
+    _vaultCoverTicks++;
     if (covered) {
         _vaultClear = 0;
         _vaultCovered++;
-        if (_vaultCovered >= kVaultCoverStrikes) [self setVaultCoverHidden:YES reason:who];
+        if (dwellPassed && _vaultCovered >= kVaultCoverStrikes) [self setVaultCoverHidden:YES reason:who];
     } else {
         _vaultCovered = 0;
         _vaultClear++;
-        if (_vaultClear >= kVaultCoverClearTicks) [self setVaultCoverHidden:NO reason:nil];
+        if (dwellPassed && _vaultClear >= kVaultCoverClearTicks) [self setVaultCoverHidden:NO reason:nil];
         // 没被盖住的时候，顺手把自己顶回本层最前：访达的桌面窗和组件是同一层
         // （都是 kCGDesktopIconWindowLevel），它一旦排到组件前面——刷新桌面、切 Space、
         // 换壁纸都会重排——整块桌面就归它，组件看着好好的却一点都点不动。
-        // 这一层没有「置顶」可设，只能定时顶回去。
-        if (!_vaultCoverHidden) {
+        // 这一层没有「置顶」可设，只能定时顶回去。每 5 次检测顶一次就够，次次都问纯属白烧。
+        if (!_vaultCoverHidden && (_vaultCoverTicks % kVaultRaiseEveryTicks) == 0) {
             for (NSWindow *w in _vaultWindows) [w orderFrontRegardless];
         }
     }
@@ -616,6 +629,7 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     _vaultCoverHidden = hidden;
     _vaultCovered = 0;
     _vaultClear = 0;
+    _vaultCoverToggledAt = [NSDate date];
     [self applyVaultVisibility];
     DeskLog(@"弹药库%@（被应用窗口盖住）%@", hidden ? @"临时收起" : @"重新出现", reason ?: @"");
 }
@@ -710,22 +724,56 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     }
 }
 
-// 动画按 30fps 推进，重画与否交给视图自己判断。空闲时只剩一道慢扫描带，
-// 降到 10fps 照样看不出差别，却不用一直占着 CPU
+// 动画表只在真有事做的时候挂着。
+// 之前它是常开的 60fps，并且"空闲时每 3 帧也重画一次"——理由是那条慢扫描带常年要动。
+// 实测后果：DeskBoard 稳定吃 39% CPU，活动监视器「对能耗的影响」88.5（同机 MiniMax Code 才 8.5），
+// sample 三秒里主线程约四成时间都在 DeskVaultView drawRect → 逐张卡片 CoreText 排版。
+// 现在改成：没人动组件 → 一帧都不重画，表也停掉；视图哪天要动了，自己把表叫回来。
 - (void)startVaultTicking {
     _lastVaultTick = [NSDate date];
     _lastVaultStat = [NSDate date];
-    // 60fps 而不是 30fps：缓动曲线在 33ms 一步的表上只有两三个可见台阶，
-    // 看着就是"啪"地跳过去。16ms 一步才够画出连续的淡入淡出。
-    // 空闲时下面 vaultTick: 里的降频照旧，所以没人动组件时并不真的按 60fps 烧 CPU。
-    _vaultTick = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0 target:self
-                                                selector:@selector(vaultTick:) userInfo:nil repeats:YES];
-    [[NSRunLoop mainRunLoop] addTimer:_vaultTick forMode:NSRunLoopCommonModes];
-    // 盖住检测单独一个慢表，不塞进 30fps 的动画表里：没人动组件的时候不该按帧频去问 WindowServer
+    [self resumeVaultTicking];
+    // 盖住检测单独一个慢表，不塞进动画表里：没人动组件的时候不该按帧频去问 WindowServer
     _vaultCoverTimer = [NSTimer scheduledTimerWithTimeInterval:kVaultCoverInterval target:self
                                                        selector:@selector(checkVaultCover:)
                                                        userInfo:nil repeats:YES];
     [[NSRunLoop mainRunLoop] addTimer:_vaultCoverTimer forMode:NSRunLoopCommonModes];
+}
+
+- (void)resumeVaultTicking {
+    if (_vaultTick) return;
+    _lastVaultTick = [NSDate date];
+    // 60fps 而不是 30fps：缓动曲线在 33ms 一步的表上只有两三个可见台阶，
+    // 看着就是"啪"地跳过去。16ms 一步才够画出连续的淡入淡出。
+    _vaultTick = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0 target:self
+                                                selector:@selector(vaultTick:) userInfo:nil repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:_vaultTick forMode:NSRunLoopCommonModes];
+}
+
+// 停表不等于睡死：留一个 10Hz 的看门狗兜底，万一某个动画没走 setNeedsDisplay 这条路，
+// 最多 100ms 也能把表叫回来
+- (void)parkVaultTicking {
+    if (!_vaultTick) return;
+    [_vaultTick invalidate];
+    _vaultTick = nil;
+    if (_vaultWatchdog) return;
+    _vaultWatchdog = [NSTimer scheduledTimerWithTimeInterval:0.1 target:self
+                                                    selector:@selector(vaultWatchdog:)
+                                                    userInfo:nil repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:_vaultWatchdog forMode:NSRunLoopCommonModes];
+}
+
+- (void)vaultWatchdog:(NSTimer *)t {
+    for (NSWindow *w in _vaultWindows) {
+        DeskVaultView *v = (DeskVaultView *)w.contentView;
+        if ([v isKindOfClass:[DeskVaultView class]] && [v needsRedraw]) { [self resumeVaultTicking]; break; }
+    }
+    // 目录统计很贵（一个文件夹几万文件），入库退库时已经刷过，
+    // 这里只做兜底对账：五分钟扫一次，捡到用户在 Finder 里直接动过库的情况
+    if ([[NSDate date] timeIntervalSinceDate:_lastVaultStat] > 300.0) {
+        _lastVaultStat = [NSDate date];
+        [[DeskVault shared] refreshStats];
+    }
 }
 
 - (void)vaultTick:(NSTimer *)t {
@@ -741,18 +789,13 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
         [v tick:dt];
         if ([v needsRedraw]) busy = YES;
     }
-    if (!busy && (++_vaultFrameSkip % 3)) return;
+    // 这一帧照画，包括动画收尾那一帧；画完发现没得动了就停表
     for (NSWindow *w in _vaultWindows) {
         DeskVaultView *v = (DeskVaultView *)w.contentView;
         if ([v isKindOfClass:[DeskVaultView class]]) [v setNeedsDisplay:YES];
     }
-
-    // 目录统计很贵（一个文件夹几万文件），入库退库时已经刷过，
-    // 这里只做兜底对账：五分钟扫一次，捡到用户在 Finder 里直接动过库的情况
-    if ([now timeIntervalSinceDate:_lastVaultStat] > 300.0) {
-        _lastVaultStat = now;
-        [[DeskVault shared] refreshStats];
-    }
+    if (!busy) [self parkVaultTicking];
+    return;
 }
 
 #pragma mark - 坐标胶囊与保存

@@ -206,6 +206,8 @@ static const CGFloat kVaultCoverShare = 0.25;
     NSMutableArray<NSWindow *> *_monitorWindows;
     DeskPlaceStore *_monitorPlaces;
     DeskProcsMonitor *_procs;
+    DeskHistory *_hist;             // 12 小时历史桶（自己攒，系统没有这个口径）
+    NSTimeInterval _histLastAt;     // 上一拍的真实时刻，dt 由它算
     BOOL _monitorHidden;
     NSInteger _monitorStyle;
     NSMenu *_monitorStyleMenu;
@@ -290,6 +292,11 @@ static const CGFloat kVaultCoverShare = 0.25;
     // 活动监视器再单独一份存档：三块组件各摆各的，共用会互相顶掉
     _monitorPlaces = [[DeskPlaceStore alloc] initWithDictionary:[ud dictionaryForKey:K(@"MonitorPlaces")]];
     _procs = [DeskProcsMonitor new];
+    // 12 小时历史：自己攒。macOS 没有公开 API 能给"过去 12 小时"的任意指标
+    // （getloadavg 只到 15 分钟，host_cpu_load_info 和网卡计数都是自开机累计）
+    _hist = [[DeskHistory alloc] initWithPath:[[self dataDir]
+                                              stringByAppendingPathComponent:@"History-12h.plist"]];
+    [_hist load];
     if (_monitorPlaces.count == 0) {
         DeskPlace mseed = [DeskPlaceStore defaultPlace];
         // 默认右上角：左上已经被卡片面板占了，左下是弹药库，右下是访达桌面图标的落点
@@ -825,6 +832,13 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     __weak typeof(self) weakSelf = self;
     __weak NSWindow *weakW = w;
     v.onUserMove = ^{ [weakSelf saveMonitorPlaceInWindow:weakW]; };
+    // 视图不碰 DeskHistory（保持"只画不采"），只拿一个取数口；而且只在换拍时问一次
+    v.historyForPid = ^double(pid_t pid, DeskHistMetric m, double *covered) {
+        // 直接捕获 _hist：它不反向引用 self，所以不会成环；用 weakSelf 反而要为此开个属性
+        if (!_hist) return 0;
+        return [_hist averageForPid:pid metric:m now:[NSDate date].timeIntervalSince1970
+                         window:kDeskHistoryWindow covered:covered];
+    };
     v.onLog = ^(NSString *message) { DeskLog(@"活动监视器 %@", message); };
     // 组件自己说"我要动了"就把动画表叫回来：空闲时那张表是停着的
     v.onNeedFrames = ^{ [weakSelf resumeWidgetTicking]; };
@@ -1024,12 +1038,15 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
 
 // 5 秒一拍采进程。采和画是分开的：动画表空闲就停，但榜不能停，
 // 不然桌面上一动不动，谁也不知道机器现在在干什么
+// 隐藏时也要继续采：不然"隐藏 6 小时"会在历史里留 6 小时的空洞，而 12h 平均的分母
+// 是窗口本身，那段空洞会被当成 0 计进去，恢复显示后数字长期偏低且看不出来。
 - (void)refreshMonitor:(NSTimer *)t {
-    if (_monitorHidden || _monitorWindows.count == 0) return;
+    BOOL live = !_monitorHidden && _monitorWindows.count > 0;
     NSArray<DeskProc *> *rows = [_procs sample];
     _monitorCount = (NSInteger)rows.count;
     double energySum = 0;
     for (DeskProc *p in rows) if (p.energy > 0) energySum += p.energy;
+    if (!_monitorHidden) [self recordHistory:rows energy:energySum];
 
     // 榜头那四个总量读数复用面板那一拍采到的系统指标，不为这个组件多跑一次 IOKit
     DeskStats *st = _lastStats;
@@ -1046,6 +1063,23 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
         v.totalEnergy = energySum;
         v.procCount = rows.count;
         [v updateRows:rows];
+    }
+    (void)live;
+}
+
+// 喂一拍历史。dt 用真实时间差而不是写死的 5 —— 定时器会漂，系统睡眠醒来还会跳拍
+- (void)recordHistory:(NSArray<DeskProc *> *)rows energy:(double)energySum {
+    NSTimeInterval now = [NSDate date].timeIntervalSince1970;
+    double dt = _histLastAt > 0 ? now - _histLastAt : 5.0;
+    _histLastAt = now;
+    DeskStats *st = _lastStats;
+    double totals[4] = { st ? st.cpu : 0, st ? (double)st.memUsed : 0,
+                         energySum, st ? (st.netRecv + st.netSend) / 1024.0 : 0 };
+    [_hist noteSampleAt:now seconds:dt rows:rows totals:totals];
+    [_hist flushIfNeeded];      // 内部限流：每分钟最多写一次盘
+    if (_hist.recordedSeconds < 3600 && fmod(now, 300) < 6.0) {
+        DeskLog(@"活动监视器 12h 历史已记录 %.2f 小时（跟踪 %lu 个进程）",
+                _hist.recordedSeconds / 3600.0, (unsigned long)_hist.trackedPids);
     }
 }
 
@@ -1523,7 +1557,7 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
     [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:[self dataDir]]];
 }
 
-- (void)quit:(id)sender { [NSApp terminate:nil]; }
+- (void)quit:(id)sender { [_hist flushIfNeeded]; [NSApp terminate:nil]; }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender { return NO; }
 

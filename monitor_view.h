@@ -3,6 +3,7 @@
 #import <AppKit/AppKit.h>
 #import "panel_view.h"
 #import "procs.h"
+#import "history.h"
 #import "quad.h"
 
 NS_ASSUME_NONNULL_BEGIN
@@ -32,7 +33,11 @@ typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
 @property (nonatomic, copy) void (^onUserMove)(void);
 // 空闲时那张 60fps 的表是停着的，视图要动就自己把表叫回来（和弹药库同一套，别再犯 39% CPU 那个病）
 @property (nonatomic, copy) void (^onNeedFrames)(void);
-// 悬停某个进程：main.m 据此开/收卡外浮层。pid < 0 = 移开
+// 12 小时平均的取数口。由 main.m 注入（视图不碰 DeskHistory，保持"只画不采"）。
+// 关键约束：这个块只在**数据换拍**时被调用一次，绝不能在 drawRect 里现问 ——
+// 一次窗口求和要遍历 720 个桶，16 行乘上 60fps 就是白白把 CPU 送掉。
+@property (nonatomic, copy, nullable) double (^historyForPid)(pid_t pid, DeskHistMetric m, double *covered);
+//// 悬停某个进程：main.m 据此开/收卡外浮层。pid < 0 = 移开
 @property (nonatomic, copy) void (^onHover)(pid_t pid, NSRect rowInWindow);
 
 // 塞假数据给预览/校验工具用，不碰真实系统
@@ -46,11 +51,17 @@ typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
 // 指标条几何：整行宽、贴在文字下面，和卡片面板 panel_view.m 的 drawBar 同一套算法。
 // 单独露出来是给 verify 用的 —— 这条几何就是"和卡片一样"的全部内容，飘回去就得被发现。
 + (NSRect)barRectInRow:(NSRect)row;
+// 现在这根条画在 12h 那根的上方 3pt 处。两个口都露出来是给 verify 用的：
+// 三样东西挤在 19pt 一行里（文字 12pt + 两根 2pt 条 + 两条缝），飘一pt 就压字。
++ (NSRect)nowBarRectInRow:(NSRect)row;
 // 只给校验用：把「我用的就是卡片面板那一套取色」变成能断言的东西
 - (DeskPalette)paletteSnapshot;
 - (NSInteger)hitTestRowAt:(NSPoint)p in:(NSRect)b metric:(NSInteger *)metric;
 - (pid_t)pidAtMetric:(NSInteger)metric row:(NSInteger)row;
 - (BOOL)isDragging;
+// 悬停浮层要显示精确的 12h 数字和"已记录多久"，这两个口就是给它用的
+- (double)historyAverageAtMetric:(NSInteger)m row:(NSInteger)r;
+- (double)historyCoveredAtMetric:(NSInteger)m row:(NSInteger)r;
 
 #pragma mark - 调角模式（和卡片面板 / 弹药库同一条路）
 // 变形时整张组件先画成正的、烘成位图，再按四角投影；没变形时走实时绘制，文字才是原生清晰度。

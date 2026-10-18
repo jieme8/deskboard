@@ -106,6 +106,8 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     NSTrackingArea *_track;
     DeskPalette _pal;         // 每次 drawRect 按系统外观重取，和卡片面板同一个 DeskPaletteFor
     NSString *_cellName[4][4];    // 截断在数据变更时算一次，绘制路径只贴字
+    double _cellAvg[4][4];          // 12h 平均：同样只在换拍时算一次，绘制路径只读
+    double _cellCov[4][4];          // 这一格里窗口内真正记录到的秒数（数据完不完整靠它）
     // 调角模式：变形时整张组件先画成正的、烘成位图，再按四角投影（和弹药库同一条路）
     DeskQuadOffsets _quadOffsets;
     BOOL _editing;
@@ -185,6 +187,13 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
             _cellName[m][i] = [self fitName:p.name width:[self nameWidthForMetric:m]
                                        font:MonReg(10.5)];
             _cellTarget[m][i] = MAX(0.04, MIN(1.0, [self valueOf:p metric:m] / peak));
+            // 12h 平均只在换拍问一次；DeskHistMetric 和 DeskMonitorMetric 四个成员顺序一致
+            _cellAvg[m][i] = 0; _cellCov[m][i] = 0;
+            if (self.historyForPid) {
+                double cov = 0;
+                _cellAvg[m][i] = self.historyForPid(p.pid, (DeskHistMetric)m, &cov);
+                _cellCov[m][i] = cov;
+            }
         }
     }
     if (self.isWarped) {
@@ -272,6 +281,10 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 // 抄 panel_view.m:244：行底往上留 1pt 缝，条子本身 2pt，圆角取半高
 + (NSRect)barRectInRow:(NSRect)row {
     return NSMakeRect(NSMinX(row), NSMaxY(row) - kBarH - 1, NSWidth(row), kBarH);
+}
+
++ (NSRect)nowBarRectInRow:(NSRect)row {
+    return NSMakeRect(NSMinX(row), NSMaxY(row) - kBarH * 2 - 2, NSWidth(row), kBarH);
 }
 
 - (DeskPalette)paletteSnapshot {
@@ -484,7 +497,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         [hl fill];
     }
     if (!p) {   // 数据不足：画淡占位，格子不能塌（铺满度是硬要求）
-        MonStr(r == 0 ? @"没有更多活动" : @"", NSMakePoint(NSMinX(row), NSMinY(row) + 2),
+        MonStr(r == 0 ? @"没有更多活动" : @"", NSMakePoint(NSMinX(row), NSMinY(row) + 1),
                MonText(10.5), [_pal.label colorWithAlphaComponent:0.62], shadow);
         return;
     }
@@ -492,16 +505,32 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     // 指标条：整行宽、2pt 高、贴在文字下面 —— 和卡片面板 panel_view.m:244 是同一个元素。
     // 它原来是"名字右侧一段 44pt 胶囊 + 一截灰细线"，横在字旁边；压在深浅不一的壁纸上
     // 就是一团灰，用户说的"字体下面有阴影"其实是这个，不是任何一处 NSShadow。
-    NSRect bar = [DeskMonitorView barRectInRow:row];
+    // 两根 2pt 条上下分开画，不重叠所以不会看混：上=现在，下=过去 12 小时平均。
+    // 下面那根自带轨道，长度不足就是"长期比现在闲"，一眼读得出来。
+    NSRect bar = [DeskMonitorView barRectInRow:row];            // 下：12h
+    NSRect nowBar = [DeskMonitorView nowBarRectInRow:row];   // 上：现在
     NSBezierPath *track = [NSBezierPath bezierPathWithRoundedRect:bar xRadius:kBarH / 2 yRadius:kBarH / 2];
     [_pal.barTrack setFill];
     [track fill];
     double frac = MAX(0.0, MIN(1.0, _cellFrac[m][r]));
     if (frac > 0.0) {
-        NSRect knob = NSMakeRect(NSMinX(bar), NSMinY(bar),
-                                 MAX(3.0, round(NSWidth(bar) * frac)), kBarH);
+        NSRect knob = NSMakeRect(NSMinX(nowBar), NSMinY(nowBar),
+                                 MAX(3.0, round(NSWidth(nowBar) * frac)), kBarH);
         NSBezierPath *fp = [NSBezierPath bezierPathWithRoundedRect:knob xRadius:kBarH / 2 yRadius:kBarH / 2];
         [MonMetricColor(m) setFill];
+        [fp fill];
+    }
+    // 12h 条按"同一把尺"画：分母用现在这条的满刻度换算，两根条子才可直接比长短
+    double histFrac = 0.0;
+    if (_cellCov[m][r] > 0 && _cellFrac[m][r] > 0.001) {
+        double live = [self valueTextScaleForMetric:m row:r];
+        if (live > 0) histFrac = MAX(0.0, MIN(1.0, _cellAvg[m][r] / live));
+    }
+    if (histFrac > 0.0) {
+        NSRect knob = NSMakeRect(NSMinX(bar), NSMinY(bar),
+                                 MAX(3.0, round(NSWidth(bar) * histFrac)), kBarH);
+        NSBezierPath *fp = [NSBezierPath bezierPathWithRoundedRect:knob xRadius:kBarH / 2 yRadius:kBarH / 2];
+        [[MonMetricColor(m) colorWithAlphaComponent:0.45] setFill];
         [fp fill];
     }
 
@@ -515,11 +544,28 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     // 实机量过这块壁纸：监视器底下 p95 亮度 44，卡片底下 p95 94 —— 卡片在更亮的地方都还敢用
     // 蓝灰标签，这里更没有理由不用。
     // 文字顶对齐到行内 +2，给下面的 2pt 指标条留出 1pt 缝，和卡片面板同一套算法。
-    MonStr(name, NSMakePoint(nameX, NSMinY(row) + 2), nf, _pal.label, shadow);
+    MonStr(name, NSMakePoint(nameX, NSMinY(row) + 1), nf, _pal.label, shadow);
 
     NSString *val = [self valueTextFor:p metric:m];
     NSFont *vf = MonNum(11.0, NSFontWeightMedium);   // 对齐面板的 rowFont（等宽 Medium）
-    MonStr(val, NSMakePoint(NSMaxX(row) - MonWidth(val, vf), NSMinY(row) + 2), vf, _pal.primary, shadow);
+    MonStr(val, NSMakePoint(NSMaxX(row) - MonWidth(val, vf), NSMinY(row) + 1), vf, _pal.primary, shadow);
+}
+
+// 现在这根条子的满刻度对应的原始量值：12h 条要和它同一把尺，长短才可比
+- (double)valueTextScaleForMetric:(NSInteger)m row:(NSInteger)r {
+    DeskProc *p = [self procAtMetric:m row:r];
+    if (!p) return 0;
+    double v = [self valueOf:p metric:m];
+    return v > 0 ? v / MAX(0.04, _cellTarget[m][r]) : 0;
+}
+
+- (double)historyAverageAtMetric:(NSInteger)m row:(NSInteger)r {
+    if (m < 0 || m > 3 || r < 0 || r >= kMonitorRowsPerQuadrant) return 0;
+    return _cellAvg[m][r];
+}
+- (double)historyCoveredAtMetric:(NSInteger)m row:(NSInteger)r {
+    if (m < 0 || m > 3 || r < 0 || r >= kMonitorRowsPerQuadrant) return 0;
+    return _cellCov[m][r];
 }
 
 - (NSString *)valueTextFor:(DeskProc *)p metric:(NSInteger)m {
@@ -641,6 +687,9 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     _totalEnergy = src->_totalEnergy; _totalNetIn = src->_totalNetIn; _totalNetOut = src->_totalNetOut;
     _procCount = src->_procCount;
     [self updateRows:src->_all];
+    for (int m = 0; m < 4; m++)
+        for (int r = 0; r < kMonitorRowsPerQuadrant; r++) { _cellAvg[m][r] = src->_cellAvg[m][r];
+                                                            _cellCov[m][r] = src->_cellCov[m][r]; }
     // 必须在这里显式钉一次：updateRows: 末尾那个 snap 走的是"我自己 isWarped"，而素材源
     // 自己从没变形（它就是张正的），于是条子会停在 0 —— 实机烘出来就是只有灰轨道没进度条
     for (int m = 0; m < 4; m++)

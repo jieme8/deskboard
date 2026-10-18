@@ -9,6 +9,7 @@
 #import "vault_view.h"
 #import "monitor_view.h"
 #import "procs.h"
+#import "history.h"
 #import "oilfeed.h"
 
 // oilfeed.m 的私有类方法，断言直接喂一行接口记录来验"下次窗口"的推算
@@ -800,10 +801,15 @@ int main(int argc, const char *argv[]) {
             for (int r = 0; r < kMonitorRowsPerQuadrant; r++) {
                 NSRect row = [mv rowRectAtMetric:m row:r in:mv.bounds];
                 NSRect bar = [DeskMonitorView barRectInRow:row];
+                NSRect nowBar = [DeskMonitorView nowBarRectInRow:row];
                 if (fabs(NSHeight(bar) - 2.0) > 0.001 || fabs(NSWidth(bar) - NSWidth(row)) > 0.001
-                    || !NSContainsRect(row, bar)) barBad = YES;
-                // 文字带（行顶 +2，10.5pt 行高约 13）不能被条子压到
-                if (NSMinY(bar) < NSMinY(row) + 2 + 13.0) barBad = YES;
+                    || fabs(NSWidth(nowBar) - NSWidth(row)) > 0.001
+                    || !NSContainsRect(row, bar) || !NSContainsRect(row, nowBar)) barBad = YES;
+                // 一行 19pt 要装：文字 1..13、现在条 13..15、12h 条 16..18。
+                // 文字带按 10.5pt 的视觉高度算 12pt（不是 13），两根条子都不能进这 12pt
+                if (NSMinY(nowBar) < NSMinY(row) + 1 + 12.0) barBad = YES;
+                if (NSMaxY(nowBar) > NSMinY(bar)) barBad = YES;          // 两根条子不许叠
+                if (NSMaxY(bar) > NSMaxY(row)) barBad = YES;             // 也不许出格
             }
         }
         Say(!barBad, @"16 行的指标条都是行底 2pt 整行宽细条，且不压文字（照抄卡片面板）");
@@ -854,7 +860,6 @@ int main(int argc, const char *argv[]) {
         Say(NSMinX(mb) >= 0 && NSMinY(mb) >= 0 && NSMaxX(mb) <= warp.width && NSMaxY(mb) <= warp.height,
             @"单个角往死里拖也被夹进画布：(%.0f,%.0f)-(%.0f,%.0f)",
             NSMinX(mb), NSMinY(mb), NSMaxX(mb), NSMaxY(mb));
-        mv.editing = YES;
         // 真实拖拽在这台机器上没法用合成事件驱动（无辅助功能权限），所以把"拖一个角"拆成
         // 可直接调用的口，在这里按真实数值断言：位移 → 跟随 → 夹取 → 非法角号不改状态。
         mv.editing = YES;
@@ -882,6 +887,78 @@ int main(int argc, const char *argv[]) {
         Say(mv.isWarped, @"角点归零但调角模式还开着 —— 仍在变形态，把手才画得出来");
         mv.editing = NO;
         Say(!mv.isWarped, @"退出调角且角点为零：回到实时绘制");
+        printf("\n12 小时历史桶：口径、剪枝与落盘\n");
+        NSTimeInterval T = [NSDate date].timeIntervalSince1970;
+        NSString *hp = [NSTemporaryDirectory() stringByAppendingPathComponent:
+                        [NSString stringWithFormat:@"deskboard-hist-%@.plist", NSUUID.UUID.UUIDString]];
+        DeskHistory *H = [[DeskHistory alloc] initWithPath:hp];
+        double cov = -1;
+        Say(fabs([H averageForPid:4242 metric:DeskHistCPU now:T window:kDeskHistoryWindow covered:&cov]) < 1e-9
+            && cov == 0, @"空历史：平均 0 且 covered 0 —— 界面据此标\"已记录 0 小时\"，不假装满 12 小时");
+        DeskProc *one = [DeskProc new];
+        one.pid = 4242; one.name = @"跑满一核一分钟"; one.cpu = 100.0; one.mem = 50e6;
+        one.wakeups = 10.0; one.sockets = 3; one.energy = 100.8;
+        double sys0[4] = { 30.0, 19e9, 160.0, 5.0 };
+        [H noteSampleAt:T - 30 seconds:60.0 rows:@[one] totals:sys0];
+        double c1 = -1;
+        double avg = [H averageForPid:4242 metric:DeskHistCPU now:T window:kDeskHistoryWindow covered:&c1];
+        // 只攒到 60 秒时，分母是 60 而不是 43200 —— 否则冷启动头一天这根条子永远是亚像素
+        Say(fabs(avg - 100.0) < 1e-6,
+            @"数据不足 12 小时时分母收敛到已记录秒数：刚攒 60 秒、跑满一核 → %.1f%%（不是 %.4f%%）",
+            avg, 100.0 * 60.0 / kDeskHistoryWindow);
+        Say(fabs(c1 - 60.0) < 1e-6, @"covered 如实报 60 秒，不冒充 12 小时");
+        double hcs = -1;
+        double savg = [H averageForSystemMetric:DeskHistCPU now:T window:kDeskHistoryWindow covered:&hcs];
+        Say(fabs(savg - 30.0) < 1e-6 && fabs(hcs - 60.0) < 1e-6,
+            @"榜头系统总量同一口径：%.2f%%", savg);
+        DeskProc *fresh = [DeskProc new];
+        fresh.pid = 7777; fresh.name = @"刚启动没基线"; fresh.cpu = -1; fresh.mem = 20e6;
+        fresh.wakeups = -1; fresh.energy = -1; fresh.sockets = 2;
+        [H noteSampleAt:T - 30 seconds:5.0 rows:@[fresh] totals:sys0];
+        double c2 = -1;
+        [H averageForPid:7777 metric:DeskHistCPU now:T window:kDeskHistoryWindow covered:&c2];
+        Say(c2 <= 0, @"cpu<0 那一拍整条跳过，不拿假 0 拉低平均（covered=%.1f）", c2);
+        [H noteSampleAt:T - 13 * 3600 seconds:5.0 rows:@[one] totals:sys0];
+        // covered 是"窗口内全局攒到的秒数"：60（第一拍）+ 5（cpu<0 那拍，进程没记上但
+        // 系统总量记上了）。13 小时前那 5 秒被剪掉，所以是 65 而不是 70。
+        double c3 = -1;
+        [H averageForPid:4242 metric:DeskHistCPU now:T window:kDeskHistoryWindow covered:&c3];
+        Say(fabs(c3 - 65.0) < 1e-6, @"13 小时前的采样不进窗口（covered=%.0f，不是 70）", c3);
+        double avgNow = -1, covNow = -1;
+        avgNow = [H averageForPid:4242 metric:DeskHistCPU now:T window:kDeskHistoryWindow covered:&covNow];
+        Say([H flushIfNeeded], @"落盘成功");
+        DeskHistory *H2 = [[DeskHistory alloc] initWithPath:hp];
+        [H2 load];
+        double c4 = -1;
+        double avg2 = [H2 averageForPid:4242 metric:DeskHistCPU now:T window:kDeskHistoryWindow covered:&c4];
+        Say(fabs(avg2 - avgNow) < 1e-9 && fabs(c4 - covNow) < 1e-9,
+            @"重启读回后平均值与 covered 不变（%.2f%% / %.0fs）", avg2, c4);
+        // 攒满 12 小时后必须收敛回字面口径：跑满一核 60 秒、其余 11.98 小时是 0
+        NSMutableArray<DeskProc *> *hIdle = [NSMutableArray array];
+        DeskProc *hIdleProc = [DeskProc new];
+        hIdleProc.pid = 4242; hIdleProc.name = @"跑满一核一分钟"; hIdleProc.cpu = 0; hIdleProc.mem = 50e6;
+        hIdleProc.wakeups = 0; hIdleProc.sockets = 3; hIdleProc.energy = 0;
+        [hIdle addObject:hIdleProc];
+        DeskHistory *H3 = [[DeskHistory alloc] initWithPath:hp];
+        for (int i = 0; i < 720; i++) {          // 720 拍 × 60 秒 = 正好 12 小时
+            one.cpu = (i == 0) ? 100.0 : 0.0;    // 只有第一拍跑满一核
+            [H3 noteSampleAt:T - (719 - i) * 60.0 seconds:60.0 rows:@[one] totals:sys0];
+        }
+        double c5 = -1;
+        double hFull = [H3 averageForPid:4242 metric:DeskHistCPU now:T window:kDeskHistoryWindow covered:&c5];
+        Say(fabs(hFull - 100.0 * 60.0 / kDeskHistoryWindow) < 1e-6,
+            @"攒满 12 小时后自动收敛回字面口径：%.4f%% == 100×60/43200（covered=%.0fs）", hFull, c5);
+        NSMutableArray *many = [NSMutableArray array];
+        for (int i = 0; i < 300; i++) {
+            DeskProc *p = [DeskProc new];
+            p.pid = (pid_t)(10000 + i); p.name = [NSString stringWithFormat:@"p%d", i];
+            p.cpu = 300.0 / (i + 1); p.mem = 1e6 * (300 - i); p.wakeups = 5; p.sockets = i % 9; p.energy = 1.0;
+            [many addObject:p];
+        }
+        [H2 noteSampleAt:T seconds:5.0 rows:many totals:sys0];
+        Say(H2.trackedPids <= 40, @"一拍 300 个进程也只跟四榜前几名：trackedPids=%lu（文件不会无限长）",
+            (unsigned long)H2.trackedPids);
+        [[NSFileManager defaultManager] removeItemAtPath:hp error:NULL];
         // 实机抓到过一次：素材源自己不"变形"，所以 updateRows: 里那句按 isWarped 的
         // 缓动吸附没跑，烘出来的位图只有灰轨道、没有进度条。这条守住换拍后条子仍然满。
         mv.quadOffsets = mo;                      // 进变形态

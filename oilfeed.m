@@ -153,7 +153,21 @@ static NSDate *NextWindow(NSDate *last) {
         return nil;
     }
 
+    NSDate *now0 = [NSDate date];
     NSDate *nxt = NextWindow(last);
+    // 接口里最新一行是"上一次已经公布的结果"，下一次窗口只能自己推算。推算出来的日子
+    // 一旦过去就必须继续往后推：官方往往要晚一两天才把新价贴上来，那段时间里 rows[0]
+    // 一直是老日期，不推的话卡片会永远停在"10月16日 24:00 · 已过调价日"，
+    // 看起来就像"日期过了还显示老数据"。
+    NSDate *pendingWindow = nil;
+    NSCalendar *gcal = [NSCalendar currentCalendar];
+    for (int guard = 0; guard < 6; guard++) {
+        // 调价在当天 24:00 生效，所以"过去"的判点是次日零点
+        NSDate *effective = [gcal dateByAddingUnit:NSCalendarUnitDay value:1 toDate:nxt options:0];
+        if (!effective || [effective compare:now0] == NSOrderedDescending) break;
+        pendingWindow = nxt;
+        nxt = NextWindow(nxt);
+    }
     NSDateFormatter *md = [NSDateFormatter new];
     md.dateFormat = @"M月d日";
     md.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
@@ -164,7 +178,7 @@ static NSDate *NextWindow(NSDate *last) {
     iso.dateFormat = @"yyyy-MM-dd";
     iso.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
 
-    NSDate *now = [NSDate date];
+    NSDate *now = now0;
     NSInteger daysLeft = [cal components:NSCalendarUnitDay
                                 fromDate:[cal startOfDayForDate:now]
                                   toDate:nxt
@@ -177,6 +191,7 @@ static NSDate *NextWindow(NSDate *last) {
 
     if (facts) {
         facts[@"lastAdjust"] = [iso stringFromDate:last];
+        facts[@"pendingWindow"] = pendingWindow ? [md stringFromDate:pendingWindow] : nil;
         facts[@"price"] = price;
         if (hasPrev) facts[@"prev"] = prev;
         if (hasDelta) facts[@"delta"] = delta;
@@ -197,6 +212,9 @@ static NSDate *NextWindow(NSDate *last) {
                            [md stringFromDate:nxt], (long)daysLeft,
                            [hm stringFromDate:now]];
     // 这两个只有接口给了才写，卡片那边也就只在有值时才画涨跌标记
+    if (pendingWindow) {
+        [js appendFormat:@"  \"pendingWindow\": \"%@\",\n", [md stringFromDate:pendingWindow]];
+    }
     if (hasPrev) [js appendFormat:@"  \"prevPrice\": %.2f,\n", [prev doubleValue]];
     if (hasDelta) [js appendFormat:@"  \"delta\": %.2f,\n", [delta doubleValue]];
     [js appendFormat:@"  \"lastAdjust\": \"%@\",\n"

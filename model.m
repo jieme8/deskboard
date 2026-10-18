@@ -113,13 +113,21 @@ static NSString *DaysText(NSNumber *daysLeft) {
     NSString *nextDate = StrField(dict, @"nextDate");
     NSString *nextTime = StrField(dict, @"nextTime");
     NSString *days = DaysText(NumField(dict, @"daysLeft"));
+    NSString *pending = StrField(dict, @"pendingWindow");
     NSMutableArray *info = [NSMutableArray array];
-    if (nextDate.length) {
+    // 油价区只有 150pt 宽（panel_view.m 的 kOilW），说明行是画上去的、不折行不截断，
+    // 三个事实一起上会溢出到分隔线右边去。所以"上期待发布"出现时让位：
+    // 时间和倒计时都不画，只留日期 + 这一句最该让人看见的话。
+    if (pending.length && nextDate.length) {
+        [info addObject:nextDate];
+        [info addObject:@"上期待发布"];
+    } else if (nextDate.length) {
         [info addObject:nextTime.length ? [NSString stringWithFormat:@"%@ %@", nextDate, nextTime] : nextDate];
     }
     // "还剩"只跟在真的还有几天后面：daysLeft=0 是"今天"、负数是"已过调价日"，
     // 无脑加前缀会拼出"还剩 今天"这种读不通的话
-    if (days.length && ![days isEqualToString:@"\u2014"]) [info addObject:days.integerValue > 0 ? [NSString stringWithFormat:@"还剩 %@", days] : days];
+    if (!pending.length && days.length && ![days isEqualToString:@"\u2014"])
+        [info addObject:days.integerValue > 0 ? [NSString stringWithFormat:@"还剩 %@", days] : days];
     m.infoLine = info.count ? [info componentsJoinedByString:@" · "] : @"";
 
     NSString *updatedAt = StrField(dict, @"updatedAt");

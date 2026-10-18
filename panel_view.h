@@ -1,14 +1,8 @@
 // 桌面小组件面板：唯一的渲染出口，只读 DeskModel，不做任何数据获取。
 #import <AppKit/AppKit.h>
 #import "model.h"
+#import "palette.h"
 #import "quad.h"
-
-typedef NS_ENUM(NSInteger, DeskStyle) {
-    DeskStylePlate = 0,    // 圆角卡 + 壁纸采样模糊 + 描边
-    DeskStyleFeather,      // 没有边界：一层羽化暗角垫在文字下，文字带柔和投影
-    DeskStyleBare,         // 完全无底，只有文字和投影
-    DeskStyleHUD,          // 贴在壁纸窗玻璃上的青色 HUD，无底板无描边
-};
 
 extern const CGFloat kDeskPanelWidth;   // 横版卡片宽度，窗口尺寸与测试都以它为准
 extern const CGFloat kDeskStatColW;     // 指标左列宽

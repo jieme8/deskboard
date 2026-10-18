@@ -54,7 +54,7 @@ BASE=( -fobjc-arc -mmacosx-version-min=13.0 -isysroot "$SDK"
 build_tools() {
   mkdir -p "$BUILD_DIR/tools"
   clang "${BASE[@]}" -framework AppKit -framework IOKit -framework CoreImage -framework ImageIO -framework SystemConfiguration -framework CoreWLAN -framework QuartzCore \
-        -o "$BUILD_DIR/tools/verify" tools/verify.m model.m panel_view.m places.m sysmon.m hidtemp.m backdrop.m quad.m vault.m vault_art.m vault_view.m
+        -o "$BUILD_DIR/tools/verify" tools/verify.m model.m oilfeed.m palette.m panel_view.m places.m sysmon.m hidtemp.m backdrop.m quad.m vault.m vault_art.m vault_view.m procs.m monitor_view.m
   clang "${BASE[@]}" -framework AppKit -framework CoreGraphics -framework CoreImage -framework ImageIO -framework QuartzCore \
         -o "$BUILD_DIR/tools/verify_thumb" tools/verify_thumb.m vault.m vault_art.m vault_view.m backdrop.m quad.m
   clang "${BASE[@]}" -framework AppKit \
@@ -70,10 +70,18 @@ build_tools() {
         -o "$BUILD_DIR/tools/probe_scroll" tools/probe_scroll.m vault.m vault_art.m vault_view.m backdrop.m quad.m
   clang "${BASE[@]}" -framework AppKit -framework CoreImage -framework ImageIO -framework QuartzCore -framework SystemConfiguration -framework CoreWLAN -framework IOKit \
         -o "$BUILD_DIR/tools/preview_vault" tools/preview_vault.m vault.m vault_art.m vault_view.m backdrop.m quad.m
+  # 活动监视器离屏出图 + 采集层冒烟测试：CLI 看不见桌面，这两件是唯一的肉眼替身
+  clang "${BASE[@]}" -framework AppKit -framework CoreImage -framework ImageIO -framework QuartzCore -framework IOKit \
+        -o "$BUILD_DIR/tools/preview_monitor" tools/preview_monitor.m procs.m palette.m monitor_view.m vault.m vault_art.m vault_view.m backdrop.m quad.m
+  # 字缘暗不暗，不能靠肉眼猜：同一个字符串走三条真实上屏路径，各开一个窗口逐张量像素
+  clang "${BASE[@]}" -framework AppKit -framework CoreGraphics \
+        -o "$BUILD_DIR/tools/probe_smooth" tools/probe_smooth.m
+  clang "${BASE[@]}" -framework Foundation \
+        -o "$BUILD_DIR/tools/try_procs" tools/try_procs.m procs.m
   clang "${BASE[@]}" -framework AppKit \
         -o "$BUILD_DIR/tools/mkicon" tools/mkicon.m
   clang "${BASE[@]}" -framework AppKit -framework CoreImage -framework ImageIO -framework IOKit -framework SystemConfiguration -framework CoreWLAN -framework QuartzCore \
-        -o "$BUILD_DIR/tools/preview" tools/preview.m model.m panel_view.m sysmon.m hidtemp.m backdrop.m quad.m vault.m vault_art.m vault_view.m
+        -o "$BUILD_DIR/tools/preview" tools/preview.m model.m palette.m panel_view.m sysmon.m hidtemp.m backdrop.m quad.m vault.m vault_art.m vault_view.m
 }
 
 # 图标母版由代码画（tools/mkicon.m），这里只负责铺 iconset 的 10 个尺寸并打成 .icns。
@@ -101,7 +109,7 @@ case "${1:-}" in
     ;;
   --check)
     echo "→ 严格编译检查（-Wall -Werror，警告即失败）"
-    clang -fsyntax-only "${BASE[@]}" main.m model.m oilfeed.m panel_view.m places.m hud.m sysmon.m hidtemp.m backdrop.m quad.m vault.m vault_art.m vault_view.m
+    clang -fsyntax-only "${BASE[@]}" main.m model.m oilfeed.m palette.m panel_view.m places.m hud.m sysmon.m hidtemp.m backdrop.m quad.m vault.m vault_art.m vault_view.m procs.m monitor_view.m
     echo "→ 编译校验工具"
     build_tools
     echo "→ 模型与布局断言"
@@ -120,7 +128,7 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 echo "→ 编译"
 clang "${BASE[@]}" \
       -framework AppKit -framework CoreGraphics -framework IOKit -framework CoreImage -framework ImageIO -framework SystemConfiguration -framework CoreWLAN -framework QuartzCore \
-      -o "$APP/Contents/MacOS/$APP_NAME" main.m model.m oilfeed.m panel_view.m places.m hud.m sysmon.m hidtemp.m backdrop.m quad.m vault.m vault_art.m vault_view.m
+      -o "$APP/Contents/MacOS/$APP_NAME" main.m model.m oilfeed.m palette.m panel_view.m places.m hud.m sysmon.m hidtemp.m backdrop.m quad.m vault.m vault_art.m vault_view.m procs.m monitor_view.m
 
 echo "→ 生成 App 图标"
 build_tools

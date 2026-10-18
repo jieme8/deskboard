@@ -7,6 +7,16 @@
 #import "backdrop.h"
 #import "vault.h"
 #import "vault_view.h"
+#import "monitor_view.h"
+#import "procs.h"
+#import "oilfeed.h"
+
+// oilfeed.m 的私有类方法，断言直接喂一行接口记录来验"下次窗口"的推算
+@interface DeskOilFeed (VerifyOil)
++ (NSString *)bodyFromRow:(NSDictionary *)row facts:(NSMutableDictionary *)facts error:(NSString **)err;
+@end
+
+#import <math.h>
 
 // vault_view.m 里的私有方法，断言只读它算出来的扫描带位置（-1 = 这一帧不画扫描带）
 @interface DeskVaultView (VerifyEnergy)
@@ -34,6 +44,22 @@ static NSEvent *ScrollProbeEvent(CGFloat deltaY, BOOL precise) {
 
 
 static int gFail = 0;
+
+// monitor_view.m 的私有几何，断言里按同一套常量复算一遍，
+// 万一两边漂了这条断言会立刻红
+extern const CGFloat kMonitorViewWidth, kMonitorViewHeight;
+static const CGFloat kMonitorPadXForVerify = 14.0, kMonitorPadTopForVerify = 13.0;
+static const CGFloat kMonitorQuadGapX = 11.0, kMonitorQuadGapY = 9.0;
+static const CGFloat kMonitorGridTopForVerify = 48.0;
+static NSRect MonitorQuadFor(DeskMonitorView *v, NSInteger m) {
+    CGFloat w = (kMonitorViewWidth - 2 * kMonitorPadXForVerify - kMonitorQuadGapX) / 2.0;
+    CGFloat bodyH = kMonitorViewHeight - kMonitorGridTopForVerify - kMonitorPadTopForVerify;
+    CGFloat h = (bodyH - kMonitorQuadGapY) / 2.0;
+    int col = (int)m % 2, row = (int)m / 2;
+    return NSMakeRect(kMonitorPadXForVerify + col * (w + kMonitorQuadGapX),
+                      kMonitorGridTopForVerify + row * (h + kMonitorQuadGapY), w, h);
+}
+
 static int gPass = 0;
 
 static void Say(BOOL ok, NSString *fmt, ...) NS_FORMAT_FUNCTION(2, 3);
@@ -730,6 +756,274 @@ int main(int argc, const char *argv[]) {
             CGFloat s = [[sv valueForKey:@"_scrollTarget"] floatValue];
             Say(s >= 0 && s <= [sv maxScroll], @"偏移仍在 [0, %.0f] 内，没滚出边界", [sv maxScroll]);
         }
+
+        printf("\n活动监视器：几何、排序与刻度换算\n");
+        DeskMonitorView *mv = [[DeskMonitorView alloc] initWithRows:@[]];
+        [mv setStandInScreenRect:NSMakeRect(150, 60, kMonitorViewWidth, kMonitorViewHeight)];
+        Say(NSWidth(mv.bounds) == kMonitorViewWidth && NSHeight(mv.bounds) == kMonitorViewHeight,
+            @"组件本体 %.0fx%.0fpt（和定稿尺寸一致）", kMonitorViewWidth, kMonitorViewHeight);
+        // 四榜拼起来必须正好铺满内区：不许重叠，也不许留出空带（"铺满"是硬要求）
+        NSRect quads[4], u = NSZeroRect;
+        BOOL overlap = NO, escaped = NO;
+        for (int m = 0; m < 4; m++) {
+            quads[m] = MonitorQuadFor(mv, m);
+            for (int k = 0; k < m; k++) {
+                NSRect both = NSIntersectionRect(quads[k], quads[m]);
+                if (NSWidth(both) > 1.0 && NSHeight(both) > 1.0) overlap = YES;
+            }
+            u = NSUnionRect(u, quads[m]);
+        }
+        NSRect inner = NSInsetRect(mv.bounds, kMonitorPadXForVerify, kMonitorPadTopForVerify);
+        Say(!overlap, @"四个象限互不重叠");
+        Say(fabs(NSMinX(u) - NSMinX(inner)) <= 1.0 && fabs(NSMaxX(u) - NSMaxX(inner)) <= 1.0,
+            @"横向铺满内区（象限 %.0f..%.0f，内区 %.0f..%.0f）",
+            NSMinX(u), NSMaxX(u), NSMinX(inner), NSMaxX(inner));
+        Say(NSMaxY(u) <= NSMaxY(inner) + 1.0 && NSMaxY(inner) - NSMaxY(u) <= 14.0,
+            @"纵向铺满内区且不越界（象限底 %.0f，内区底 %.0f）", NSMaxY(u), NSMaxY(inner));
+        // 每一行都得待在自己那一格里：越界就是当初"第四行画到下一榜头上"那个 bug
+        for (int m = 0; m < 4; m++) {
+            NSRect q = MonitorQuadFor(mv, m);
+            for (int r = 0; r < kMonitorRowsPerQuadrant; r++) {
+                NSRect row = [mv rowRectAtMetric:m row:r in:mv.bounds];
+                if (!NSContainsRect(q, NSInsetRect(row, -4, -2))) {
+                    escaped = YES;
+                    Say(NO, @"榜 %d 第 %d 行越出格子（行 y=%.0f..%.0f，格子 y=%.0f..%.0f）",
+                        m, r, NSMinY(row), NSMaxY(row), NSMinY(q), NSMaxY(q));
+                }
+            }
+        }
+        Say(!escaped, @"16 行全部落在各自格子里");
+        // "和卡片一样"的落点：指标条是贴在文字下面的一根 2pt 整行宽细条（卡片面板 kBarH=2.0），
+        // 不是横在字旁边的一段胶囊 —— 用户说的"字体下面有阴影"量的就是这个元素。
+        BOOL barBad = NO;
+        for (int m = 0; m < 4; m++) {
+            for (int r = 0; r < kMonitorRowsPerQuadrant; r++) {
+                NSRect row = [mv rowRectAtMetric:m row:r in:mv.bounds];
+                NSRect bar = [DeskMonitorView barRectInRow:row];
+                if (fabs(NSHeight(bar) - 2.0) > 0.001 || fabs(NSWidth(bar) - NSWidth(row)) > 0.001
+                    || !NSContainsRect(row, bar)) barBad = YES;
+                // 文字带（行顶 +2，10.5pt 行高约 13）不能被条子压到
+                if (NSMinY(bar) < NSMinY(row) + 2 + 13.0) barBad = YES;
+            }
+        }
+        Say(!barBad, @"16 行的指标条都是行底 2pt 整行宽细条，且不压文字（照抄卡片面板）");
+        // 取色必须和卡片面板共用同一份 DeskPaletteFor，并且跟着系统外观翻：
+        // 以前监视器自己抄了一份深色档，用户哪天切 Light 就会出现「卡片深字、监视器还白字」
+        void (^chk)(NSColor *, NSColor *, NSString *) = ^(NSColor *x, NSColor *y, NSString *why) {
+            CGFloat r1,g1,b1,a1,r2,g2,b2,a2;
+            [x getRed:&r1 green:&g1 blue:&b1 alpha:&a1]; [y getRed:&r2 green:&g2 blue:&b2 alpha:&a2];
+            Say(fabs(r1-r2)<1e-6 && fabs(g1-g2)<1e-6 && fabs(b1-b2)<1e-6 && fabs(a1-a2)<1e-6, @"%@", why);
+        };
+        mv.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+        DeskPalette palD = [mv paletteSnapshot];
+        chk(palD.label, DeskPaletteFor(DeskStyleBare, YES).label, @"深色档：监视器标签色 == 卡片面板");
+        chk(palD.primary, DeskPaletteFor(DeskStyleBare, YES).primary, @"深色档：监视器数据色 == 卡片面板");
+        mv.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+        DeskPalette palL = [mv paletteSnapshot];
+        chk(palL.label, DeskPaletteFor(DeskStyleBare, NO).label, @"浅色档：监视器跟着系统外观翻，和卡片同步");
+        chk(palD.label, DeskRGB(140, 168, 192, 1.0), @"深色档实测仍是那组蓝灰 (140,168,192)");
+        Say(![palD.label isEqual:palL.label], @"深浅两档确实不同 —— 这条耦合不是恒真");
+        printf("\n活动监视器：调角模式\n");
+        NSSize flat = [DeskMonitorView windowSizeWarped:NO];
+        NSSize warp = [DeskMonitorView windowSizeWarped:YES];
+        Say(flat.width == kMonitorViewWidth && flat.height == kMonitorViewHeight,
+            @"未变形窗口 == 本体 %.0fx%.0f（走实时绘制，文字原生清晰）", flat.width, flat.height);
+        Say(warp.width == kMonitorViewWidth + 120.0 && warp.height == kMonitorViewHeight + 120.0,
+            @"变形窗口各边外扩 60pt = %.0fx%.0f（四角拖出去不会被裁）", warp.width, warp.height);
+        Say(!mv.isWarped, @"新建时没变形");
+        DeskQuadOffsets mo = DeskQuadOffsetsZero();
+        mo.tl = NSMakeSize(-28.995, -46.609); mo.tr = NSMakeSize(-4.453, 4.141);
+        mo.br = NSMakeSize(-4.403, 6.518);    mo.bl = NSMakeSize(38.516, -52.0);   // 卡片面板实际在用的那组角点
+        mv.quadOffsets = mo;
+        Say(mv.isWarped, @"角点非零即进入变形态");
+        DeskQuad mq = [mv currentQuad];
+        // 画布是 y 朝上：卡片下边缘落在 pad 上、上边缘在 pad+高度上，别把两条边写反
+        Say(fabs(mq.tl.x - (kDeskQuadPad + mo.tl.width)) < 1e-3
+            && fabs(mq.tl.y - (kDeskQuadPad + kMonitorViewHeight + mo.tl.height)) < 1e-3
+            && fabs(mq.bl.y - (kDeskQuadPad + mo.bl.height)) < 1e-3,
+            @"角点换算到画布坐标含 %.0fpt 余量：左上 (%.1f,%.1f)、左下 y=%.1f",
+            kDeskQuadPad, mq.tl.x, mq.tl.y, mq.bl.y);
+        Say([mv needsRedraw] == NO, @"变形态 needsRedraw 恒 NO —— 动画表不会为一张位图逐帧空转");
+        DeskQuadOffsets mback = DeskQuadOffsetsFromString(DeskQuadOffsetsString(mo));
+        Say(NSEqualSizes(mback.tl, mo.tl) && NSEqualSizes(mback.bl, mo.bl), @"角点存档往返不变");
+        DeskQuadOffsets pulled = DeskQuadOffsetsZero();
+        NSSize mcard = NSMakeSize(kMonitorViewWidth, kMonitorViewHeight);
+        pulled.tl = NSMakeSize(-999, 999); pulled.tr = NSMakeSize(999, 999);
+        pulled.br = NSMakeSize(999, -999); pulled.bl = NSMakeSize(-999, -999);
+        NSRect mb = DeskQuadBounds(DeskQuadFromOffsets(mcard, DeskQuadOffsetsClamp(pulled, mcard)));
+        Say(NSMinX(mb) >= 0 && NSMinY(mb) >= 0 && NSMaxX(mb) <= warp.width && NSMaxY(mb) <= warp.height,
+            @"单个角往死里拖也被夹进画布：(%.0f,%.0f)-(%.0f,%.0f)",
+            NSMinX(mb), NSMinY(mb), NSMaxX(mb), NSMaxY(mb));
+        mv.editing = YES;
+        // 真实拖拽在这台机器上没法用合成事件驱动（无辅助功能权限），所以把"拖一个角"拆成
+        // 可直接调用的口，在这里按真实数值断言：位移 → 跟随 → 夹取 → 非法角号不改状态。
+        mv.editing = YES;
+        mv.quadOffsets = DeskQuadOffsetsZero();
+        DeskQuad zero = [mv currentQuad];
+        [mv dragCorner:0 toCanvasPoint:NSMakePoint(zero.tl.x - 30.0, zero.tl.y + 12.0)];
+        DeskQuadOffsets dr = mv.quadOffsets;
+        Say(fabs(dr.tl.width + 30.0) < 1e-3 && fabs(dr.tl.height - 12.0) < 1e-3,
+            @"拖左上角到 (%.1f,%.1f) 后位移 == %.1f,%.1f（画布 y 朝上，往上拖为正）",
+            zero.tl.x - 30.0, zero.tl.y + 12.0, dr.tl.width, dr.tl.height);
+        Say(fabs(mv.currentQuad.tl.x - (kDeskQuadPad + dr.tl.width)) < 1e-3
+            && fabs(mv.currentQuad.tr.x - (kDeskQuadPad + kMonitorViewWidth)) < 1e-3,
+            @"只有被拖的那个角动：左上 x=%.1f、右上 x=%.1f 仍贴画布原位在 %.0f",
+            mv.currentQuad.tl.x, mv.currentQuad.tr.x, kDeskQuadPad + kMonitorViewWidth);
+        [mv dragCorner:3 toCanvasPoint:NSMakePoint(-5000, -5000)];
+        NSRect cb = DeskQuadBounds([mv currentQuad]);
+        Say(NSMinX(cb) >= 0 && NSMinY(cb) >= 0, @"往屏幕外死拖也被夹回画布内：左上 (%.0f,%.0f)",
+            NSMinX(cb), NSMinY(cb));
+        DeskQuadOffsets beforeBad = mv.quadOffsets;
+        [mv dragCorner:-1 toCanvasPoint:NSMakePoint(0, 0)];
+        [mv dragCorner:9 toCanvasPoint:NSMakePoint(0, 0)];
+        Say(NSEqualSizes(beforeBad.bl, mv.quadOffsets.bl) && NSEqualSizes(beforeBad.tl, mv.quadOffsets.tl),
+            @"非法角号不改任何角点（拖到画布外也不炸）");
+        mv.quadOffsets = DeskQuadOffsetsZero();
+        Say(mv.isWarped, @"角点归零但调角模式还开着 —— 仍在变形态，把手才画得出来");
+        mv.editing = NO;
+        Say(!mv.isWarped, @"退出调角且角点为零：回到实时绘制");
+        // 实机抓到过一次：素材源自己不"变形"，所以 updateRows: 里那句按 isWarped 的
+        // 缓动吸附没跑，烘出来的位图只有灰轨道、没有进度条。这条守住换拍后条子仍然满。
+        mv.quadOffsets = mo;                      // 进变形态
+        NSMutableArray<DeskProc *> *bake = [NSMutableArray array];
+        for (int i = 0; i < 16; i++) {
+            DeskProc *p = [DeskProc new];
+            p.pid = (pid_t)(2000 + i);
+            p.name = [NSString stringWithFormat:@"烘检进程 %02d", i];
+            p.cpu = 50.0 - i; p.mem = 300e6; p.energy = 10.0; p.sockets = 3;
+            [bake addObject:p];
+        }
+        [mv updateRows:bake];                     // 换一拍数据
+        NSBitmapImageRep *baked = [mv bakedFlatBitmap];
+        Say(baked != nil, @"烘得出位图（%ldx%ld）", (long)baked.pixelsWide, (long)baked.pixelsHigh);
+        if (baked) {
+            unsigned char *px = baked.bitmapData;
+            NSUInteger spp = baked.bitsPerPixel / 8, n = baked.pixelsWide * baked.pixelsHigh, blue = 0;
+            for (NSUInteger i = 0; i < n; i++) {
+                unsigned char *q = px + i * spp;
+                // CPU 榜那条蓝 (91,184,255)：条子要是停在 0，一个这种像素都不会有
+                if (q[3] > 200 && labs((long)q[0] - 91) < 40 && labs((long)q[1] - 184) < 40
+                    && labs((long)q[2] - 255) < 25) blue++;
+            }
+            Say(blue > 300, @"烘出来的位图里有 %lu 个进度条蓝像素 —— 素材源的条子没退回 0",
+                (unsigned long)blue);
+        }
+        // 弹药库踩过这个坑：变形态画的是素材源烘出来的位图，setStyle: 不转给素材源的话
+        // "一进调角，无论选哪种外观都退回默认样式"。这里换两次外观各烘一张，比像素。
+        NSUInteger diff = 0;
+        {
+            NSBitmapImageRep *A = nil, *B = nil;
+            mv.style = DeskStyleBare;  A = [mv bakedFlatBitmap];
+            mv.style = DeskStylePlate; B = [mv bakedFlatBitmap];
+            NSUInteger spp = A.bitsPerPixel / 8, n = A.pixelsWide * A.pixelsHigh;
+            unsigned char *pa = A.bitmapData, *pb = B.bitmapData;
+            for (NSUInteger k = 0; k < n; k++)
+                if (pa[k * spp + 3] != pb[k * spp + 3]) diff++;
+            Say(diff > n / 50, @"变形态下换外观真的换：Bare 与 Plate 有 %lu 像素 alpha 不同（%.1f%%）",
+                (unsigned long)diff, (double)diff / n * 100);
+        }
+        mv.quadOffsets = DeskQuadOffsetsZero();
+
+        mv.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+        NSMutableArray<DeskProc *> *mk = [NSMutableArray array];
+        for (int i = 0; i < 16; i++) {
+            DeskProc *p = [DeskProc new];
+            p.pid = (pid_t)(1000 + i);
+            p.name = [NSString stringWithFormat:@"测试进程 %02d", i];
+            p.cpu = 40.0 - i; p.mem = (400 - i * 20) * 1048576.0;
+            p.energy = 30.0 - i; p.sockets = 8 - (i % 8);
+            [mk addObject:p];
+        }
+        [mv updateRows:mk];
+        NSRect r0 = [mv rowRectAtMetric:0 row:1 in:mv.bounds];
+        NSInteger hitMetric = -1;
+        Say([mv hitTestRowAt:NSMakePoint(NSMidX(r0), NSMidY(r0)) in:mv.bounds metric:&hitMetric] == 1
+            && hitMetric == 0, @"命中测试认得是哪一榜的哪一行");
+        NSRect otherRow = [mv rowRectAtMetric:2 row:0 in:mv.bounds];
+        Say([mv hitTestRowAt:NSMakePoint(NSMidX(otherRow), NSMidY(otherRow)) in:mv.bounds
+                        metric:&hitMetric] == 0 && hitMetric == 2,
+            @"悬停只会点亮一行，不会四榜一起亮");
+
+        // 刻度换算的回归哨兵：rusage 的 CPU 时间是 mach 刻度不是纳秒（本机 1 刻度 = 41.667ns）。
+        // 忘了换算的话，一个跑满一核的进程只会读到 2.4%，榜就全是 0。这里自己烧一核来验。
+        DeskProcsMonitor *pm = [DeskProcsMonitor new];
+        [pm sample];
+        volatile double burn = 0;
+        NSDate *until = [NSDate dateWithTimeIntervalSinceNow:0.8];
+        while ([until timeIntervalSinceNow] > 0) burn += sqrt(burn + 1.0001);
+        NSArray<DeskProc *> *rows = [pm sample];
+        DeskProc *me = nil;
+        for (DeskProc *p in rows) if (p.pid == getpid()) me = p;
+        Say(me != nil, @"采到了自己（pid %d）", (int)getpid());
+        Say(me && me.cpu > 60.0,
+            @"烧一核 0.8 秒后自报 %%CPU=%.1f（刻度算错只会读到 %.1f 上下）",
+            me ? me.cpu : -1, me ? me.cpu / 41.667 : -1);
+        Say(me && me.mem > 1e6, @"内存这一拍就有值（%.0fM），不用等第二拍", me ? me.mem / 1e6 : 0);
+        Say(rows.count > 50, @"这一拍读到 %lu 个本用户进程", (unsigned long)rows.count);
+
+        printf("\n油价下次窗口推算：过期就往后推，不许停在过去的日期\n");
+        // 复现的就是用户报的那一幕：接口最新一行还停在 9/25，推算出来的 10/16 已经过了，
+        // 卡片于是长期显示"10月16日 24:00 · 已过调价日"
+        NSDictionary *row = @{ @"DIM_DATE": @"2026-09-25 00:00:00", @"V92": @8.57,
+                               @"QE92": @8.25, @"ZDE92": @0.32 };
+        NSMutableDictionary *facts = [NSMutableDictionary dictionary];
+        NSString *feedErr = nil;
+        NSString *body = [DeskOilFeed bodyFromRow:row facts:facts error:&feedErr];
+        Say(body.length > 0 && !feedErr, @"拼得出正文（错误=%@）", feedErr ?: @"无");
+        NSDictionary *out = body.length ? [NSJSONSerialization JSONObjectWithData:[body dataUsingEncoding:NSUTF8StringEncoding]
+                                                                         options:0 error:NULL] : nil;
+        Say(out != nil, @"拼出来的 JSON 能解析（手工拼字符串容易漏逗号）");
+        Say([out[@"daysLeft"] integerValue] >= 0,
+            @"daysLeft=%@，不再是负数（负数就是「已过调价日」那一行）", out[@"daysLeft"]);
+        NSString *nextDate = out[@"nextDate"];
+        Say(nextDate.length > 0, @"下次窗口有值：%@", nextDate);
+        // 关键一条：推算出的窗口必须晚于今天
+        NSDateFormatter *md2 = [NSDateFormatter new];
+        md2.dateFormat = @"M月d日";
+        md2.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+        NSString *todayText = [md2 stringFromDate:[NSDate date]];
+        Say(![nextDate isEqualToString:todayText], @"下次窗口不是今天（今天=%@）", todayText);
+        Say(out[@"pendingWindow"] != nil || [out[@"lastAdjust"] isEqualToString:@"2026-09-25"],
+            @"过掉的窗口被记成 pendingWindow=%@，卡片会写「结果待发布」", out[@"pendingWindow"] ?: @"无");
+
+        // 说明行是画上去的、不折行不截断：超出油价列宽就会压到分隔线和指标列上。
+        // 这条守的是"加一句文案"这种看起来最无害的改动
+        for (NSDictionary *c in @[@{ @"d": @"10月30日", @"t": @"24:00", @"n": @13 },
+                                  @{ @"d": @"10月30日", @"t": @"24:00", @"n": @4 }]) {
+            NSString *line = [NSString stringWithFormat:@"%@ %@ · 还剩 %@ 天", c[@"d"], c[@"t"], c[@"n"]];
+            CGFloat w = [line sizeWithAttributes:@{NSFontAttributeName:
+                        [NSFont systemFontOfSize:11.0 weight:NSFontWeightMedium]}].width;
+            Say(w <= 150.0, @"说明行「%@」%.1fpt ≤ 油价列宽 150pt", line, w);
+        }
+        NSString *pendLine = @"10月30日 · 上期待发布";
+        CGFloat pw = [pendLine sizeWithAttributes:@{NSFontAttributeName:
+                     [NSFont systemFontOfSize:11.0 weight:NSFontWeightMedium]}].width;
+        Say(pw <= 150.0, @"待发布那一行「%@」%.1fpt ≤ 150pt", pendLine, pw);
+        // 真走一遍模型：待发布时说明行必须换成短文案，不能日期+时间+倒计时+待发布全叠上
+        DeskModel *pm2 = [DeskModel modelFromDictionary:
+                          @{ @"nextDate": @"10月30日", @"nextTime": @"24:00",
+                             @"pendingWindow": @"10月16日", @"daysLeft": @13, @"price": @8.57 }];
+        CGFloat realW = [pm2.infoLine sizeWithAttributes:@{NSFontAttributeName:
+                        [NSFont systemFontOfSize:11.0 weight:NSFontWeightMedium]}].width;
+        Say(realW <= 150.0, @"模型实际拼出的说明行「%@」%.1fpt ≤ 150pt", pm2.infoLine, realW);
+        DeskModel *nm2 = [DeskModel modelFromDictionary:
+                          @{ @"nextDate": @"10月30日", @"nextTime": @"24:00",
+                             @"daysLeft": @13, @"price": @8.57 }];
+        CGFloat normalW = [nm2.infoLine sizeWithAttributes:@{NSFontAttributeName:
+                        [NSFont systemFontOfSize:11.0 weight:NSFontWeightMedium]}].width;
+        Say(normalW <= 150.0 && [nm2.infoLine containsString:@"还剩"],
+            @"正常时说明行「%@」%.1fpt ≤ 150pt", nm2.infoLine, normalW);
+
+        // 实机对照实验（tools/probe_smooth.m，同一个字符串上屏三条路径各开一个窗口，
+        // screencapture -l 逐窗抓真像素）：非 layer 直绘 / layer 背衬 / NSImage 贴图，
+        // 三张的字缘暗像素都是 0.000%，亮像素完全相等 —— 图层根本不是"字带阴影"的原因。
+        // 既然没差别，就跟着另外两块组件保持非 layer-backed，别单独开。
+        Say(!mv.wantsLayer, @"活动监视器不是 layer-backed（实机测过：开图层不会改变字缘，纯跟着另两块走）");
+        DeskVaultView *vv = [[DeskVaultView alloc] initWithItems:@[]];
+        DeskPanelView *pv = [DeskPanelView new];
+        Say(!vv.wantsLayer && !pv.wantsLayer, @"对照组：弹药库 / 卡片面板同样不是 layer-backed");
+        DeskMonitorHoverView *hv = [DeskMonitorHoverView new];
+        Say(!hv.wantsLayer, @"悬停浮层也不开图层");
 
         printf("\n%d 项通过，%d 项失败\n", gPass, gFail);
         return gFail == 0 ? 0 : 1;

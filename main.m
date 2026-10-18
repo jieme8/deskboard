@@ -13,6 +13,10 @@
 #import "vault.h"
 #import "vault_view.h"
 #import "vault_art.h"
+#import "procs.h"
+#import "monitor_view.h"
+#import <libproc.h>
+#import <sys/proc_info.h>
 
 static NSString *const kDomain = @"com.hujie.deskboard";
 
@@ -190,12 +194,28 @@ static const CGFloat kVaultCoverShare = 0.25;
     NSInteger _vaultCovered;      // 连续几次检出被盖住（防一掠而过导致闪一下）
     NSInteger _vaultClear;        // 连续几次检出空出来了
     BOOL _vaultCoverHidden;       // 因被盖住而临时收起，和用户手动隐藏分开记
-    NSTimer *_vaultTick;        // 动画驱动，只在真有事做的时候挂着
-    NSTimer *_vaultWatchdog;    // 空闲停表后的低频看门狗，负责把表叫回来
-    NSDate *_lastVaultTick;
+    NSTimer *_widgetTick;        // 动画驱动，只在真有事做的时候挂着
+    NSTimer *_widgetWatchdog;    // 空闲停表后的低频看门狗，负责把表叫回来
+    NSDate *_lastWidgetTick;
     NSDate *_vaultCoverToggledAt;  // 上一次"收起/出现"切换的时刻，防来回横跳
     NSUInteger _vaultCoverTicks;   // 盖住检测的计数，用来顺手给置顶降频
     NSDate *_lastVaultStat;
+    DeskStats *_lastStats;        // 最近一次系统指标，活动监视器的榜头读数从这里拿，不再多采一遍
+
+    // 活动监视器：第三块组件，四榜并列（CPU / 内存 / 能耗 / 网络），只列当前用户的进程
+    NSMutableArray<NSWindow *> *_monitorWindows;
+    DeskPlaceStore *_monitorPlaces;
+    DeskProcsMonitor *_procs;
+    BOOL _monitorHidden;
+    NSInteger _monitorStyle;
+    NSMenu *_monitorStyleMenu;
+    NSMenuItem *_monitorItem;
+    DeskQuadOffsets _monitorQuad;   // 活动监视器自己的四角位移，三块组件各调各的
+    BOOL _monitorEditing;
+    NSMenuItem *_monitorEditItem;
+    NSWindow *_monitorHoverWindow;   // 悬停详情浮层：象限放不下全名，只能挪到组件外
+    NSTimer *_monitorSampleTimer;   // 2 秒一拍采进程，和动画表分开：没在动也不该停采
+    NSInteger _monitorCount;
 
 }
 
@@ -222,6 +242,7 @@ static const CGFloat kVaultCoverShare = 0.25;
     }
     _hidden = [ud boolForKey:K(@"Hidden")];
     _vaultHidden = [ud boolForKey:K(@"VaultHidden")];
+    _monitorHidden = [ud boolForKey:K(@"MonitorHidden")];
     // 层级现在是硬约束：弹药库只贴桌面图标层，任何应用窗口（全屏的也一样）都在它之下。
     // 旧版有个「桌面置顶」开关会把它提到 NSFloatingWindowLevel，正好浮在窗口上面，已经整个删掉；
     // 老存档在这里顺手清掉，别留个没人读的键。
@@ -239,6 +260,9 @@ static const CGFloat kVaultCoverShare = 0.25;
     // 弹药库默认走实底卡：采样了真实壁纸，压得住字，也最融入桌面
     NSNumber *vsVal = [ud objectForKey:K(@"VaultStyle")];
     _vaultStyle = vsVal ? MIN(vsVal.integerValue, (NSInteger)DeskStyleHUD) : (NSInteger)DeskStylePlate;
+    NSNumber *msVal = [ud objectForKey:K(@"MonitorStyle")];
+    _monitorStyle = msVal ? MIN(msVal.integerValue, (NSInteger)DeskStyleHUD) : (NSInteger)DeskStylePlate;
+    _monitorQuad = DeskQuadOffsetsFromString([ud stringForKey:K(@"MonitorQuad")]);
     NSNumber *styleVal = [ud objectForKey:K(@"Style")];
     // 旧的"透视站立"已经并到调角里，存过的值越界就退到 HUD
     _style = styleVal ? MIN(styleVal.integerValue, (NSInteger)DeskStyleHUD) : DeskStyleFeather;
@@ -263,10 +287,24 @@ static const CGFloat kVaultCoverShare = 0.25;
         [_vaultPlaces setPlace:seed forKey:[_vaultPlaces keyForScreen:[NSScreen mainScreen]]];
         [self saveConfig];
     }
+    // 活动监视器再单独一份存档：三块组件各摆各的，共用会互相顶掉
+    _monitorPlaces = [[DeskPlaceStore alloc] initWithDictionary:[ud dictionaryForKey:K(@"MonitorPlaces")]];
+    _procs = [DeskProcsMonitor new];
+    if (_monitorPlaces.count == 0) {
+        DeskPlace mseed = [DeskPlaceStore defaultPlace];
+        // 默认右上角：左上已经被卡片面板占了，左下是弹药库，右下是访达桌面图标的落点
+        mseed.corner = 1;
+        mseed.dx = 16.0;
+        mseed.dy = 16.0;
+        [_monitorPlaces setPlace:mseed forKey:[_monitorPlaces keyForScreen:[NSScreen mainScreen]]];
+        [self saveConfig];
+    }
     [self buildStatusItem];
     [self rebuildWindows];
     [self rebuildVaultWindows];
-    [self startVaultTicking];
+    [self rebuildMonitorWindows];
+    [self startWidgetTicking];
+    [self startMonitorSampling];
     [self startPolling];
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(screenDidChange:)
@@ -311,6 +349,10 @@ static const CGFloat kVaultCoverShare = 0.25;
     [ud setDouble:_vaultAlpha forKey:K(@"VaultAlpha")];
     [ud setObject:DeskQuadOffsetsString(_vaultQuad) forKey:K(@"VaultQuad")];
     [ud setInteger:_vaultStyle forKey:K(@"VaultStyle")];
+    [ud setObject:[_monitorPlaces dictionary] forKey:K(@"MonitorPlaces")];
+    [ud setBool:_monitorHidden forKey:K(@"MonitorHidden")];
+    [ud setInteger:_monitorStyle forKey:K(@"MonitorStyle")];
+    [ud setObject:DeskQuadOffsetsString(_monitorQuad) forKey:K(@"MonitorQuad")];
 }
 
 - (BOOL)acquireSingleInstanceLock {
@@ -496,7 +538,7 @@ static const CGFloat kVaultCoverShare = 0.25;
     v.onLog = ^(NSString *message) { DeskLog(@"弹药库 %@", message); };
     v.onPreview = ^(NSString *path) { [weakSelf updateVaultPreviewWithPath:path forWindow:weakW]; };
     // 组件自己说"我要动了"，就把动画表叫回来。空闲停表之后，全靠这一条恢复
-    v.onNeedFrames = ^{ [weakSelf resumeVaultTicking]; };
+    v.onNeedFrames = ^{ [weakSelf resumeWidgetTicking]; };
     w.contentView = v;
     return w;
 }
@@ -724,15 +766,298 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     }
 }
 
+#pragma mark - 组件 3：活动监视器
+
+// 只贴桌面图标层，和另两块组件同一条硬约束：任何应用窗口都在它之上
+- (NSRect)monitorFrameForScreen:(NSScreen *)screen {
+    NSRect vf = screen.visibleFrame;
+    DeskPlace p = [_monitorPlaces effectivePlaceForScreen:screen];
+    CGFloat x = (p.corner == 1 || p.corner == 3) ? NSMaxX(vf) - kMonitorViewWidth - p.dx
+                                                 : vf.origin.x + p.dx;
+    CGFloat y = (p.corner >= 2) ? vf.origin.y + p.dy : NSMaxY(vf) - kMonitorViewHeight - p.dy;
+    // 存档里的 dx/dy 描述的是**看得见的卡片**，窗口在变形时外扩一圈余量，
+    // 所以先按卡片算，再按 pad 把窗口矩形撑回去
+    NSSize card = NSMakeSize(kMonitorViewWidth, kMonitorViewHeight);
+    NSSize win = [DeskMonitorView windowSizeWarped:[self monitorQuadActive]];
+    CGFloat padX = (win.width - card.width) / 2.0, padY = (win.height - card.height) / 2.0;
+    NSRect r = NSMakeRect(round(x - padX), round(y - padY), win.width, win.height);
+    if (!NSIntersectsRect(r, vf)) {
+        DeskLog(@"活动监视器档 %@ 落出可视区，夹回默认锚点（右上）", [_monitorPlaces keyForScreen:screen]);
+        p.corner = 1; p.dx = 16.0; p.dy = 16.0;
+        [_monitorPlaces setPlace:p forKey:[_monitorPlaces keyForScreen:screen]];
+        [self saveConfig];
+        r = NSMakeRect(round(NSMaxX(vf) - card.width - p.dx - padX),
+                       round(NSMaxY(vf) - card.height - p.dy - padY),
+                       win.width, win.height);
+    }
+    return r;
+}
+
+- (BOOL)monitorQuadActive { return !DeskQuadOffsetsIsZero(_monitorQuad) || _monitorEditing; }
+
+- (NSWindow *)makeMonitorWindowForScreen:(NSScreen *)screen {
+    NSRect vf = [self monitorFrameForScreen:screen];
+    NSWindow *w = [[NSWindow alloc] initWithContentRect:vf
+                                              styleMask:NSWindowStyleMaskBorderless
+                                                backing:NSBackingStoreBuffered defer:NO];
+    [w setBackgroundColor:[NSColor clearColor]];
+    w.opaque = NO;
+    // 和卡片面板一致：一直要窗影。卡片那档（panel_view 的窗口）就是 hasShadow=YES，
+    // 无底浮字看着"字后面有一层柔边"其实来自 WindowServer 按 alpha 轮廓算的窗影，
+    // 不是绘制代码画的阴影。上一版我把它关掉，结果量出来监视器字边缘压暗 1.0%
+    // 而卡片是 19.2% —— 那不是"更像卡片"，是更不像。用户要的从来不是没有影子，
+    // 而是"别和卡片不一样"，所以这里跟着面板留着。
+    w.hasShadow = YES;
+    w.level = kCGDesktopIconWindowLevel;
+    w.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces
+                         | NSWindowCollectionBehaviorStationary
+                         | NSWindowCollectionBehaviorIgnoresCycle;
+    w.movableByWindowBackground = NO;   // 拖动由 DeskMonitorView 自己实现，见 onUserMove
+    w.animationBehavior = NSWindowAnimationBehaviorNone;
+    w.excludedFromWindowsMenu = YES;
+    w.acceptsMouseMovedEvents = YES;    // 不开这个，悬停高亮是死的
+    w.title = @"DeskBoard 活动监视器";
+    DeskMonitorView *v = [[DeskMonitorView alloc] initWithFrame:NSMakeRect(0, 0, NSWidth(vf), NSHeight(vf))];
+    v.style = (DeskStyle)_monitorStyle;
+    v.quadOffsets = _monitorQuad;
+    v.editing = _monitorEditing;
+    v.procCount = _monitorCount;
+    __weak typeof(self) weakSelf = self;
+    __weak NSWindow *weakW = w;
+    v.onUserMove = ^{ [weakSelf saveMonitorPlaceInWindow:weakW]; };
+    v.onLog = ^(NSString *message) { DeskLog(@"活动监视器 %@", message); };
+    // 组件自己说"我要动了"就把动画表叫回来：空闲时那张表是停着的
+    v.onNeedFrames = ^{ [weakSelf resumeWidgetTicking]; };
+    v.onHover = ^(pid_t pid, NSRect row) { [weakSelf showMonitorHover:pid rowInWindow:row
+                                                            forWindow:weakW]; };
+    w.contentView = v;
+    return w;
+}
+
+// 浮层放在被悬停那一行的右侧；右边放不下就放左边。层级和组件同层，
+// 所以它永远盖不住用户的应用窗口，只是比卡片先画而已
+- (void)showMonitorHover:(pid_t)pid rowInWindow:(NSRect)row forWindow:(NSWindow *)host {
+    if (pid <= 0 || !host) { [_monitorHoverWindow orderOut:nil]; return; }
+    DeskProc *p = [_procs procWithPid:pid];
+    if (!p) { [_monitorHoverWindow orderOut:nil]; return; }
+    NSSize size = NSMakeSize(214.0, 150.0);
+    if (!_monitorHoverWindow) {
+        _monitorHoverWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, size.width, size.height)
+                                                         styleMask:NSWindowStyleMaskBorderless
+                                                           backing:NSBackingStoreBuffered defer:NO];
+        [_monitorHoverWindow setBackgroundColor:[NSColor clearColor]];
+        _monitorHoverWindow.opaque = NO;
+        _monitorHoverWindow.hasShadow = YES;
+        _monitorHoverWindow.level = kCGDesktopIconWindowLevel;
+        _monitorHoverWindow.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces
+                                               | NSWindowCollectionBehaviorStationary
+                                               | NSWindowCollectionBehaviorIgnoresCycle;
+        _monitorHoverWindow.ignoresMouseEvents = YES;   // 浮层不吃鼠标，不然会把悬停行本身顶掉
+        _monitorHoverWindow.animationBehavior = NSWindowAnimationBehaviorNone;
+        _monitorHoverWindow.excludedFromWindowsMenu = YES;
+    }
+    DeskMonitorHoverView *hv = [[DeskMonitorHoverView alloc] initWithFrame:NSMakeRect(0, 0, size.width, size.height)];
+    hv.procName = p.name;
+    hv.pid = p.pid;
+    hv.uid = [self uidOfPid:p.pid];
+    hv.startedAt = p.startedAt;
+    hv.cpu = p.cpu; hv.mem = p.mem; hv.energy = p.energy; hv.sockets = p.sockets;
+    _monitorHoverWindow.contentView = hv;
+
+    NSRect hf = host.frame;
+    // row 是卡片视图坐标（左上原点），窗口是屏幕坐标（左下原点）
+    CGFloat topY = NSMaxY(hf) - NSMinY(row) - NSHeight(row) / 2.0 - size.height * 0.35;
+    CGFloat x = NSMaxX(hf) + 10.0;
+    NSScreen *sc = host.screen ?: [NSScreen mainScreen];
+    if (x + size.width > NSMaxX(sc.frame)) x = NSMinX(hf) - size.width - 10.0;
+    [_monitorHoverWindow setFrame:NSMakeRect(round(x), round(topY), size.width, size.height)
+                          display:YES animate:NO];
+    [_monitorHoverWindow orderFrontRegardless];
+}
+
+- (NSInteger)uidOfPid:(pid_t)pid {
+    struct proc_bsdinfo bi;
+    if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bi, sizeof(bi)) == sizeof(bi)) return bi.pbi_uid;
+    return -1;
+}
+
+- (void)rebuildMonitorWindows {
+    [_monitorHoverWindow orderOut:nil];
+    for (NSWindow *w in _monitorWindows) [w orderOut:nil];
+    _monitorWindows = [NSMutableArray array];
+    for (NSScreen *screen in [NSScreen screens]) {
+        NSWindow *w = [self makeMonitorWindowForScreen:screen];
+        [_monitorWindows addObject:w];
+    }
+    [self applyMonitorShadow];
+    [self applyMonitorVisibility];
+    DeskLog(@"活动监视器建窗 %lu 个（读到 %ld 个进程），层级=%d（桌面图标层）",
+            (unsigned long)_monitorWindows.count, (long)_monitorCount, kCGDesktopIconWindowLevel);
+}
+
+- (void)applyMonitorVisibility {
+    for (NSWindow *w in _monitorWindows) {
+        if (_monitorHidden) [w orderOut:nil];
+        else [w orderFrontRegardless];
+    }
+}
+
+- (void)setMonitorHidden:(BOOL)hidden {
+    if (_monitorHidden == hidden) return;
+    _monitorHidden = hidden;
+    [self applyMonitorVisibility];
+    [self saveConfig];
+    [self syncMenu];
+    DeskLog(@"活动监视器 %@ 已存档", hidden ? @"隐藏" : @"显示");
+}
+
+- (void)toggleMonitorHidden:(id)sender { [self setMonitorHidden:!_monitorHidden]; }
+
+- (void)openActivityMonitor:(id)sender {
+    (void)sender;
+    NSURL *am = [NSURL fileURLWithPath:@"/System/Applications/Utilities/Activity Monitor.app"];
+    [[NSWorkspace sharedWorkspace] openURL:am];
+    DeskLog(@"活动监视器 已请求打开原生活动监视器");
+}
+
+// 换外观时窗影也要跟着换：无底那档留着窗影，字后面就全是软影子
+- (void)applyMonitorShadow {
+    // 变形态一律没窗影：那时外框是矩形，窗影会出卖"其实是个斜的四边形"
+    BOOL shadow = ![self monitorQuadActive] && ((DeskStyle)_monitorStyle != DeskStyleBare);
+    for (NSWindow *w in _monitorWindows) w.hasShadow = shadow;
+    _monitorHoverWindow.hasShadow = shadow;
+}
+
+- (void)chooseMonitorStyle:(id)sender {
+    _monitorStyle = [sender tag];
+    for (NSWindow *w in _monitorWindows) {
+        DeskMonitorView *v = (DeskMonitorView *)w.contentView;
+        if ([v isKindOfClass:[DeskMonitorView class]]) v.style = (DeskStyle)_monitorStyle;
+    }
+    [self applyMonitorShadow];
+    [self saveConfig];
+    [self syncMenu];
+}
+
+- (void)applyMonitorQuad:(DeskQuadOffsets)q {
+    _monitorQuad = q;
+    for (NSWindow *w in _monitorWindows) {
+        NSView *v = w.contentView;
+        if ([v isKindOfClass:[DeskMonitorView class]]) ((DeskMonitorView *)v).quadOffsets = q;
+    }
+    [self applyMonitorShadow];
+    [self applyMonitorFrames];
+    [self saveConfig];
+    DeskLog(@"活动监视器角点已保存 %@", DeskQuadOffsetsString(q));
+}
+
+- (void)toggleMonitorEditing:(id)sender {
+    (void)sender;
+    _monitorEditing = !_monitorEditing;
+    for (NSWindow *w in _monitorWindows) {
+        NSView *v = w.contentView;
+        if ([v isKindOfClass:[DeskMonitorView class]]) ((DeskMonitorView *)v).editing = _monitorEditing;
+    }
+    [self applyMonitorShadow];
+    [self applyMonitorFrames];
+    [self saveConfig];
+    [self syncMenu];
+    DeskLog(@"活动监视器调角模式：%@", _monitorEditing ? @"开" : @"关");
+}
+
+- (void)resetMonitorQuad:(id)sender {
+    (void)sender;
+    [self applyMonitorQuad:DeskQuadOffsetsZero()];
+    DeskLog(@"活动监视器角点已复位");
+}
+
+- (void)applyMonitorFrames {
+    NSUInteger i = 0;
+    for (NSScreen *screen in [NSScreen screens]) {
+        if (i >= _monitorWindows.count) break;
+        [_monitorWindows[i++] setFrame:[self monitorFrameForScreen:screen] display:YES animate:NO];
+    }
+}
+
+- (void)saveMonitorPlaceInWindow:(NSWindow *)w {
+    if (!w) return;
+    NSScreen *screen = w.screen ?: [NSScreen mainScreen];
+    NSRect vf = screen.visibleFrame;
+    NSRect f = w.frame;
+    // 存档里的 dx/dy 描述的是**看得见的卡片**。变形时窗口外扩一圈余量，
+    // 不先按 pad 缩回卡片矩形的话，拖一次就漂 60pt，越拖越偏。
+    NSSize mcard = NSMakeSize(kMonitorViewWidth, kMonitorViewHeight);
+    NSSize mwin = [DeskMonitorView windowSizeWarped:[self monitorQuadActive]];
+    CGFloat m_padX = (mwin.width - mcard.width) / 2.0, m_padY = (mwin.height - mcard.height) / 2.0;
+    f = NSMakeRect(NSMinX(f) + m_padX, NSMinY(f) + m_padY, mcard.width, mcard.height);
+    DeskPlace p;
+    p.corner = (NSMidY(f) > vf.origin.y + vf.size.height / 2.0 ? 0 : 2)
+             + (NSMidX(f) > vf.origin.x + vf.size.width / 2.0 ? 1 : 0);
+    p.dx = MAX(0, (p.corner == 1 || p.corner == 3) ? NSMaxX(vf) - NSMaxX(f) : f.origin.x - vf.origin.x);
+    p.dy = MAX(0, (p.corner >= 2) ? f.origin.y - vf.origin.y : NSMaxY(vf) - NSMaxY(f));
+    const CGFloat margin = 16.0;
+    CGFloat maxDx = MAX(margin, vf.size.width - kMonitorViewWidth - margin);
+    CGFloat maxDy = MAX(margin, vf.size.height - kMonitorViewHeight - margin);
+    p.dx = MIN(MAX(p.dx, margin), maxDx);
+    p.dy = MIN(MAX(p.dy, margin), maxDy);
+    if (NSIntersectsRect(f, vf)) {
+        NSString *key = [_monitorPlaces keyForScreen:screen];
+        [_monitorPlaces setPlace:p forKey:key];
+        [self saveConfig];
+        DeskLog(@"活动监视器位置已保存 %@ → 角 %ld 偏移 %.0f,%.0f", key, (long)p.corner, p.dx, p.dy);
+    } else {
+        DeskLog(@"活动监视器整块拖出可视区，不存档，原地拉回");
+        [w setFrame:[self monitorFrameForScreen:screen] display:YES];
+    }
+}
+
+- (void)startMonitorSampling {
+    if (_monitorSampleTimer) return;
+    // 5 秒一拍，和原生活动监视器的默认刷新档一致：这块榜的数字本来就是慢变量，
+    // 2 秒那一档实测把整个 App 从 2.0% 抬到 3.9%，换来的只是数字抖得更快
+    _monitorSampleTimer = [NSTimer scheduledTimerWithTimeInterval:5.0 target:self
+                                                         selector:@selector(refreshMonitor:)
+                                                         userInfo:nil repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:_monitorSampleTimer forMode:NSRunLoopCommonModes];
+    [self refreshMonitor:nil];
+}
+
+// 5 秒一拍采进程。采和画是分开的：动画表空闲就停，但榜不能停，
+// 不然桌面上一动不动，谁也不知道机器现在在干什么
+- (void)refreshMonitor:(NSTimer *)t {
+    if (_monitorHidden || _monitorWindows.count == 0) return;
+    NSArray<DeskProc *> *rows = [_procs sample];
+    _monitorCount = (NSInteger)rows.count;
+    double energySum = 0;
+    for (DeskProc *p in rows) if (p.energy > 0) energySum += p.energy;
+
+    // 榜头那四个总量读数复用面板那一拍采到的系统指标，不为这个组件多跑一次 IOKit
+    DeskStats *st = _lastStats;
+    for (NSWindow *w in _monitorWindows) {
+        DeskMonitorView *v = (DeskMonitorView *)w.contentView;
+        if (![v isKindOfClass:[DeskMonitorView class]]) continue;
+        if (st) {
+            v.totalCPU = st.cpu;
+            v.totalMemUsed = st.memUsed;
+            v.totalMemPhys = st.memTotal;
+            v.totalNetIn = st.netRecv;
+            v.totalNetOut = st.netSend;
+        }
+        v.totalEnergy = energySum;
+        v.procCount = rows.count;
+        [v updateRows:rows];
+    }
+}
+
 // 动画表只在真有事做的时候挂着。
 // 之前它是常开的 60fps，并且"空闲时每 3 帧也重画一次"——理由是那条慢扫描带常年要动。
 // 实测后果：DeskBoard 稳定吃 39% CPU，活动监视器「对能耗的影响」88.5（同机 MiniMax Code 才 8.5），
 // sample 三秒里主线程约四成时间都在 DeskVaultView drawRect → 逐张卡片 CoreText 排版。
 // 现在改成：没人动组件 → 一帧都不重画，表也停掉；视图哪天要动了，自己把表叫回来。
-- (void)startVaultTicking {
-    _lastVaultTick = [NSDate date];
+- (void)startWidgetTicking {
+    _lastWidgetTick = [NSDate date];
     _lastVaultStat = [NSDate date];
-    [self resumeVaultTicking];
+    [self resumeWidgetTicking];
     // 盖住检测单独一个慢表，不塞进动画表里：没人动组件的时候不该按帧频去问 WindowServer
     _vaultCoverTimer = [NSTimer scheduledTimerWithTimeInterval:kVaultCoverInterval target:self
                                                        selector:@selector(checkVaultCover:)
@@ -740,33 +1065,37 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     [[NSRunLoop mainRunLoop] addTimer:_vaultCoverTimer forMode:NSRunLoopCommonModes];
 }
 
-- (void)resumeVaultTicking {
-    if (_vaultTick) return;
-    _lastVaultTick = [NSDate date];
+- (void)resumeWidgetTicking {
+    if (_widgetTick) return;
+    _lastWidgetTick = [NSDate date];
     // 60fps 而不是 30fps：缓动曲线在 33ms 一步的表上只有两三个可见台阶，
     // 看着就是"啪"地跳过去。16ms 一步才够画出连续的淡入淡出。
-    _vaultTick = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0 target:self
-                                                selector:@selector(vaultTick:) userInfo:nil repeats:YES];
-    [[NSRunLoop mainRunLoop] addTimer:_vaultTick forMode:NSRunLoopCommonModes];
+    _widgetTick = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0 target:self
+                                                selector:@selector(widgetTick:) userInfo:nil repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:_widgetTick forMode:NSRunLoopCommonModes];
 }
 
 // 停表不等于睡死：留一个 10Hz 的看门狗兜底，万一某个动画没走 setNeedsDisplay 这条路，
 // 最多 100ms 也能把表叫回来
-- (void)parkVaultTicking {
-    if (!_vaultTick) return;
-    [_vaultTick invalidate];
-    _vaultTick = nil;
-    if (_vaultWatchdog) return;
-    _vaultWatchdog = [NSTimer scheduledTimerWithTimeInterval:0.1 target:self
-                                                    selector:@selector(vaultWatchdog:)
+- (void)parkWidgetTicking {
+    if (!_widgetTick) return;
+    [_widgetTick invalidate];
+    _widgetTick = nil;
+    if (_widgetWatchdog) return;
+    _widgetWatchdog = [NSTimer scheduledTimerWithTimeInterval:0.1 target:self
+                                                    selector:@selector(widgetWatchdog:)
                                                     userInfo:nil repeats:YES];
-    [[NSRunLoop mainRunLoop] addTimer:_vaultWatchdog forMode:NSRunLoopCommonModes];
+    [[NSRunLoop mainRunLoop] addTimer:_widgetWatchdog forMode:NSRunLoopCommonModes];
 }
 
-- (void)vaultWatchdog:(NSTimer *)t {
+- (void)widgetWatchdog:(NSTimer *)t {
     for (NSWindow *w in _vaultWindows) {
         DeskVaultView *v = (DeskVaultView *)w.contentView;
-        if ([v isKindOfClass:[DeskVaultView class]] && [v needsRedraw]) { [self resumeVaultTicking]; break; }
+        if ([v isKindOfClass:[DeskVaultView class]] && [v needsRedraw]) { [self resumeWidgetTicking]; break; }
+    }
+    for (NSWindow *w in _monitorWindows) {
+        DeskMonitorView *v = (DeskMonitorView *)w.contentView;
+        if ([v isKindOfClass:[DeskMonitorView class]] && [v needsRedraw]) { [self resumeWidgetTicking]; break; }
     }
     // 目录统计很贵（一个文件夹几万文件），入库退库时已经刷过，
     // 这里只做兜底对账：五分钟扫一次，捡到用户在 Finder 里直接动过库的情况
@@ -776,10 +1105,10 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     }
 }
 
-- (void)vaultTick:(NSTimer *)t {
+- (void)widgetTick:(NSTimer *)t {
     NSDate *now = [NSDate date];
-    double dt = [now timeIntervalSinceDate:_lastVaultTick];
-    _lastVaultTick = now;
+    double dt = [now timeIntervalSinceDate:_lastWidgetTick];
+    _lastWidgetTick = now;
     if (dt <= 0 || dt > 1.0) dt = 1.0 / 60.0;   // 机器睡过就按一帧算，别让动画瞬移
 
     BOOL busy = NO;
@@ -789,12 +1118,28 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
         [v tick:dt];
         if ([v needsRedraw]) busy = YES;
     }
-    // 这一帧照画，包括动画收尾那一帧；画完发现没得动了就停表
+    for (NSWindow *w in _monitorWindows) {
+        DeskMonitorView *v = (DeskMonitorView *)w.contentView;
+        if (![v isKindOfClass:[DeskMonitorView class]]) continue;
+        [v tick:dt];
+        if ([v needsRedraw]) busy = YES;
+    }
+    // 只叫"这一帧真有东西要动"的那一块组件重画。
+    // 原来这里是无条件给所有窗口 setNeedsDisplay，两块组件共用一张表之后就变成：
+    // 活动监视器每 2 秒缓动那 0.3 秒，会把弹药库一起拖成 60fps 空转
+    // （实测整个 App 从 2.0% 涨到 4.4%，把这段改成按需之后就回到 2.2% 上下）。
+    // 收尾那一帧仍然会画：视图的 tick: 在自己还没收敛时就会标脏。
     for (NSWindow *w in _vaultWindows) {
         DeskVaultView *v = (DeskVaultView *)w.contentView;
-        if ([v isKindOfClass:[DeskVaultView class]]) [v setNeedsDisplay:YES];
+        if ([v isKindOfClass:[DeskVaultView class]] && ([v needsRedraw] || [v isDragging])) {
+            [v setNeedsDisplay:YES];
+        }
     }
-    if (!busy) [self parkVaultTicking];
+    for (NSWindow *w in _monitorWindows) {
+        DeskMonitorView *v = (DeskMonitorView *)w.contentView;
+        if ([v isKindOfClass:[DeskMonitorView class]] && [v needsRedraw]) [v setNeedsDisplay:YES];
+    }
+    if (!busy) [self parkWidgetTicking];
     return;
 }
 
@@ -896,6 +1241,7 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
 // 系统指标每拍都要重画，油价数据只在文件变化时重建
 - (void)refreshStats {
     DeskStats *s = [_sys sample];
+    _lastStats = s;
     [_model updateStats:s];
     [self applyModel];
     if (++_tick % 30 == 0) {   // 约每分钟留一条轨迹，证明在持续取数而不是停在某一帧
@@ -947,6 +1293,9 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     DeskLog(@"屏幕参数变更，按存档重申位置");
     [self rebuildWindows];
     [self rebuildVaultWindows];
+    // 第三块组件也必须跟着重建：屏幕参数一变，存档里的档位可能整体落空（窗口留在旧屏幕上），
+    // 上一版这里只重建了卡片和弹药库，活动监视器就成了"改完外观后不再刷新"的那种幽灵窗口
+    [self rebuildMonitorWindows];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ [self reassertFrames]; });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)),
@@ -1015,8 +1364,9 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
     // ---- 组件 1：卡片面板（油价 / 系统状态 / 问候）----
     NSMenu *card = [[NSMenu alloc] initWithTitle:@"卡片面板"];
     _cardItem = DeskAddAction(card, @"显示 / 隐藏", self, @selector(toggleHidden:));
-    [self addSubmenuTo:card title:@"外观" menu:[self styleMenuForAction:@selector(chooseStyle:)
-                                                                  title:@"卡片外观"]];
+    [self addSubmenuTo:card title:@"外观"
+                  menu:(_styleMenu = [self styleMenuForAction:@selector(chooseStyle:)
+                                                         title:@"卡片外观"])];
     [card addItem:NSMenuItem.separatorItem];
     DeskAddAction(card, @"保存当前位置（拖完再点）", self, @selector(saveCurrentPlace:));
     [card addItem:NSMenuItem.separatorItem];
@@ -1028,7 +1378,7 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
     NSMenu *vault = [[NSMenu alloc] initWithTitle:@"弹药库 ARMORY"];
     _vaultItem = DeskAddAction(vault, @"显示 / 隐藏", self, @selector(toggleVaultHidden:));
     [self addSubmenuTo:vault title:@"外观"
-                  menu:[self styleMenuForAction:@selector(chooseVaultStyle:) title:@"弹药库外观"]];
+                  menu:(_vaultStyleMenu = [self styleMenuForAction:@selector(chooseVaultStyle:) title:@"弹药库外观"])];
     [self addSubmenuTo:vault title:@"透明度" menu:[self vaultAlphaMenu]];
     [vault addItem:NSMenuItem.separatorItem];
     DeskAddAction(vault, @"选文件/文件夹入库…", self, @selector(pickItemsToIngest:));
@@ -1036,6 +1386,18 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
     _vaultEditItem = DeskAddAction(vault, @"调角模式", self, @selector(toggleVaultEditing:));
     DeskAddAction(vault, @"复位角点", self, @selector(resetVaultQuad:));
     [self addSubmenuTo:menu title:@"弹药库 ARMORY（文件夹收纳）" menu:vault];
+
+    // ---- 组件 3：活动监视器 ACTIVITY（每进程负载四榜）----
+    NSMenu *mon = [[NSMenu alloc] initWithTitle:@"活动监视器 ACTIVITY"];
+    _monitorItem = DeskAddAction(mon, @"显示 / 隐藏", self, @selector(toggleMonitorHidden:));
+    [self addSubmenuTo:mon title:@"外观"
+                  menu:(_monitorStyleMenu = [self styleMenuForAction:@selector(chooseMonitorStyle:) title:@"活动监视器外观"])];
+    [mon addItem:NSMenuItem.separatorItem];
+    [mon addItem:NSMenuItem.separatorItem];
+    _monitorEditItem = DeskAddAction(mon, @"调角模式", self, @selector(toggleMonitorEditing:));
+    DeskAddAction(mon, @"复位角点", self, @selector(resetMonitorQuad:));
+    DeskAddAction(mon, @"打开原生活动监视器", self, @selector(openActivityMonitor:));
+    [self addSubmenuTo:menu title:@"活动监视器 ACTIVITY（CPU · 内存 · 能耗 · 网络）" menu:mon];
 
     [menu addItem:NSMenuItem.separatorItem];
 
@@ -1062,6 +1424,11 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
     _vaultEditItem.state = _vaultEditing ? NSControlStateValueOn : NSControlStateValueOff;
     for (NSMenuItem *it in _vaultStyleMenu.itemArray) {
         it.state = it.tag == _vaultStyle ? NSControlStateValueOn : NSControlStateValueOff;
+    }
+    _monitorItem.state = _monitorHidden ? NSControlStateValueOff : NSControlStateValueOn;
+    _monitorEditItem.state = _monitorEditing ? NSControlStateValueOn : NSControlStateValueOff;
+    for (NSMenuItem *it in _monitorStyleMenu.itemArray) {
+        it.state = it.tag == _monitorStyle ? NSControlStateValueOn : NSControlStateValueOff;
     }
     // 存档里的 alpha 只可能是 kVaultAlphaStep 的整数倍，四舍五入回整数再比对，避免浮点误差让勾跑掉
     NSInteger alphaPct = (NSInteger)(_vaultAlpha * 100.0 + 0.5);

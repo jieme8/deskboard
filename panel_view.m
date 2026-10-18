@@ -17,68 +17,6 @@ static const CGFloat kStatRowH  = 19.0;   // 文字 15 + 底部 2px 进度条 + 
 static const CGFloat kBarH      = 2.0;
 static const NSInteger kShortColRows = 4; // 前 4 行放左列，其余放右列：算力/网速一列，存储/网络一列
 
-
-typedef struct {
-    NSColor *border, *sep, *title, *primary, *label, *footer, *up, *down, *accent, *barTrack, *glow;
-} DeskPalette;
-
-static NSColor *RGB(int r, int g, int b, double a) {
-    return [NSColor colorWithSRGBRed:r / 255.0 green:g / 255.0 blue:b / 255.0 alpha:a];
-}
-
-static BOOL IsDarkAppearance(NSAppearance *appearance) {
-    NSString *name = appearance.name;
-    return [name isEqualToString:NSAppearanceNameDarkAqua]
-        || [name isEqualToString:NSAppearanceNameVibrantDark];
-}
-
-static BOOL IsDarkView(NSView *view) { return IsDarkAppearance(view.effectiveAppearance); }
-
-// HUD 一套刻意不分成深浅两版：它是投在窗玻璃上的显示层，颜色取自壁纸里那台雷达屏的青色，
-// 靠文字外发光而不是靠底板保证可读
-static DeskPalette PaletteFor(DeskStyle style, BOOL dark) {
-    DeskPalette p;
-    if (style == DeskStyleHUD) {
-        p.glow     = [NSColor colorWithWhite:0 alpha:0.75];
-        p.border   = [NSColor clearColor];
-        p.sep      = RGB(120, 214, 255, 0.26);
-        p.title    = RGB(126, 190, 224, 1);
-        p.primary  = RGB(226, 246, 255, 1);
-        p.label    = RGB(140, 196, 226, 1);
-        p.footer   = RGB(112, 162, 192, 1);
-        p.up       = RGB(255, 122, 122, 1);
-        p.down     = RGB(120, 226, 172, 1);
-        p.accent   = RGB(112, 216, 255, 1);
-        p.barTrack = RGB(120, 214, 255, 0.16);
-        return p;
-    }
-    if (dark) {
-        p.border   = [NSColor colorWithWhite:1.00 alpha:0.09];
-        p.sep      = [NSColor colorWithWhite:1.00 alpha:0.11];
-        p.title    = RGB(150, 184, 200, 1);
-        p.primary  = RGB(244, 248, 252, 1);
-        p.label    = RGB(140, 168, 192, 1);
-        p.footer   = RGB(126, 154, 178, 1);
-        p.up       = RGB(255, 106, 106, 1);
-        p.down     = RGB(98, 212, 152, 1);
-        p.accent   = RGB(86, 184, 250, 1);
-        p.barTrack = [NSColor colorWithWhite:1.00 alpha:0.13];
-    } else {
-        p.border   = [NSColor colorWithWhite:0.00 alpha:0.12];
-        p.sep      = [NSColor colorWithWhite:0.00 alpha:0.10];
-        p.title    = RGB(64, 90, 110, 1);
-        p.primary  = RGB(12, 26, 42, 1);
-        p.label    = RGB(74, 98, 118, 1);
-        p.footer   = RGB(96, 118, 138, 1);
-        p.up       = RGB(200, 46, 46, 1);
-        p.down     = RGB(20, 138, 82, 1);
-        p.accent   = RGB(10, 119, 193, 1);
-        p.barTrack = [NSColor colorWithWhite:0.00 alpha:0.12];
-    }
-    p.glow = nil;
-    return p;
-}
-
 static NSDictionary *Attrs(NSFont *font, NSColor *color) {
     return @{NSFontAttributeName: font, NSForegroundColorAttributeName: color};
 }
@@ -161,8 +99,8 @@ static void DrawFeather(NSRect b, NSColor *color, double feather, double targetA
 - (void)drawRect:(NSRect)dirtyRect {
     [super drawRect:dirtyRect];
     DeskModel *m = self.model ?: [DeskModel placeholderModel];
-    BOOL dark = IsDarkView(self);
-    DeskPalette p = PaletteFor(self.style, dark);
+    BOOL dark = DeskViewIsDark(self);
+    DeskPalette p = DeskPaletteFor(self.style, dark);
     NSRect b = self.bounds;
 
     if (self.style == DeskStylePlate) {
@@ -439,7 +377,7 @@ static void DrawFeather(NSRect b, NSColor *color, double feather, double targetA
 }
 
 - (void)drawHandles {
-    DeskPalette p = PaletteFor(self.style, IsDarkView(self));
+    DeskPalette p = DeskPaletteFor(self.style, DeskViewIsDark(self));
     DeskQuad q = self.currentQuad;
     NSPoint pts[4] = { q.tl, q.tr, q.br, q.bl };
     NSPoint viewPts[4];
@@ -483,7 +421,7 @@ static void DrawFeather(NSRect b, NSColor *color, double feather, double targetA
 
 - (void)drawRect:(NSRect)dirtyRect {
     NSRect b = self.bounds;
-    BOOL dark = IsDarkView(self);
+    BOOL dark = DeskViewIsDark(self);
     if (self.isWarped) {
         if (!_flatRep) [self refreshSource];
         NSImage *warped = DeskQuadRender(_flatRep, b.size, self.currentQuad);
@@ -499,7 +437,7 @@ static void DrawFeather(NSRect b, NSColor *color, double feather, double targetA
                 if (bg) {
                     [bg drawInRect:b fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0];
                 } else {
-                    [(dark ? RGB(6, 24, 46, 0.92) : RGB(242, 246, 251, 0.94)) setFill];
+                    [(dark ? DeskRGB(6, 24, 46, 0.92) : DeskRGB(242, 246, 251, 0.94)) setFill];
                     [clip fill];
                 }
                 [(dark ? [NSColor colorWithWhite:0.02 alpha:0.32]

@@ -960,9 +960,22 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     _dragLogged = NO;
     _dragStartMouse = NSEvent.mouseLocation;
     _frameAtDragStart = w.frame;
-    // 这个 API 在本 SDK 里返回 void，拿不到"它到底接管没有"的答复 —— 所以不猜，
-    // 只管调用，真正决定要不要自己搬的是 mouseDragged: 里那个"它搬过就没有我什么事"的判断。
+    // 这个 API 在本 SDK 里返回 void，拿不到"它到底接管没有"的答复。真事件下它可能
+    // **就地跑完整个拖拽才返回** —— 那样 mouseDragged/mouseUp 都不会再送到这块视图，
+    // 落档就没人做了，表现成"拖得动但一重启又跳回原位"。所以调用前后比一次窗口原点：
+    // 它真的搬过了 = 这次拖拽已经在里面结束，立刻落档并收尾；没搬 = 它只是登记了会话，
+    // 保持 _dragging 交给 mouseDragged: 那条兜底路径（校验 CLI 里就是这一支）。
+    NSPoint originBefore = w.frame.origin;
     [w performWindowDragWithEvent:event];
+    if (!NSEqualPoints(originBefore, w.frame.origin)) {
+        _dragging = NO;
+        if (self.onUserMove) self.onUserMove();
+        if (self.onLog) {
+            NSRect f = w.frame;
+            self.onLog([NSString stringWithFormat:@"AppKit 会话就地搬完：窗口原点(%.0f,%.0f)，已落档",
+                        f.origin.x, f.origin.y]);
+        }
+    }
     [self setNeedsDisplay:YES];
 }
 

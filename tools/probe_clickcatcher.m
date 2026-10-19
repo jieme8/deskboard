@@ -22,7 +22,7 @@ static long long LayerOf(CFDictionaryRef d) {
 static void Scan(CFArrayRef a, CFIndex n, NSInteger mine, CGRect target) {
     printf("目标 bounds=(%.0f, %.0f, %.0fx%.0f)，在全局前到后序列里排第 %ld\n",
            target.origin.x, target.origin.y, target.size.width, target.size.height, (long)mine);
-    int hits = 0;
+    int hits = 0, eaters = 0;
     for (CFIndex i = 0; i < mine; i++) {     // 只看在它前面的
         CFDictionaryRef d = CFArrayGetValueAtIndex(a, i);
         NSString *ow = (__bridge NSString *)CFDictionaryGetValue(d, kCGWindowOwnerName);
@@ -36,9 +36,19 @@ static void Scan(CFArrayRef a, CFIndex n, NSInteger mine, CGRect target) {
         NSString *who = [NSString stringWithFormat:@"  前面 i=%-4ld layer=%-12lld 覆盖%.0f%%  %@ %@",
                          (long)i, lyr, cover * 100.0, ow ?: @"?", nm.length ? nm : @"-"];
         printf("%s\n", who.UTF8String);
-        if (cover > 0.99) hits++;
+        if (cover > 0.99) {
+            hits++;
+            // 只有普通层（layer 0~10）的应用窗口真吃点击。Dock(20)、菜单栏(24) 和
+            // layer≈INT32 的投屏覆盖层都吃不了 —— 后者要是吃点击，整个桌面都点不动。
+            // 这条规则是踩过坑才定下来的：早先一版 probe_occlusion 把投屏层算成遮挡，
+            // 结论直接把人带偏一轮。所以"压着"必须分成两种，不然工具会自己骗人。
+            if (lyr >= 0 && lyr <= 10) eaters++;
+        }
     }
-    printf(hits ? "→ 有 %d 个窗口 100%% 压在它前面\n\n" : "→ 没有任何窗口完全压在它前面\n\n", hits);
+    printf(eaters ? "→ %d 个普通层窗口整个压着它（layer 0~10，真吃点击）→ 此刻点不到组件，不是 bug\n\n"
+                  : (hits ? "→ 没有普通层窗口压着；另有 %d 个系统/覆盖层窗口（Dock、菜单栏、投屏层）——它们不吃点击\n\n"
+                          : "→ 没有任何窗口整个压在它前面\n\n"),
+            eaters ? eaters : hits);
 }
 
 int main(int argc, const char **argv) {

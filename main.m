@@ -884,6 +884,9 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     hv.startedAt = p.startedAt;
     hv.cpu = p.cpu; hv.mem = p.mem; hv.energy = p.energy; hv.sockets = p.sockets;
     hv.histMetric = metric; hv.histAvg = histAvg; hv.histCovered = histCovered;
+    // 能耗那行报的是占比，分母必须跟组件那一拍算的一样，浮层自己再求一次和就是第二套真相
+    NSView *cv = host.contentView;
+    hv.energyTotal = [cv isKindOfClass:[DeskMonitorView class]] ? ((DeskMonitorView *)cv).energyShareTotal : 0;
     _monitorHoverWindow.contentView = hv;
 
     NSRect hf = host.frame;

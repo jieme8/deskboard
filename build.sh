@@ -73,6 +73,9 @@ build_tools() {
   # 点不动到底是"事件没送到视图"还是"被人盖住了"：先查遮挡
   clang "${BASE[@]}" -framework CoreGraphics -framework Foundation \
         -o "$BUILD_DIR/tools/probe_occlusion" tools/probe_occlusion.m places.m
+  # 遮挡要用 A/B 判：三块组件被同一批窗口压着，能拖的那两块也压着 —— 压着不等于吃点击
+  clang "${BASE[@]}" -framework CoreGraphics -framework Foundation \
+        -o "$BUILD_DIR/tools/probe_clickcatcher" tools/probe_clickcatcher.m
   # 桌面层窗口的鼠标事件到底送不送到视图：postEvent 走本进程队列，不需要辅助功能权限
   clang "${BASE[@]}" -framework AppKit -framework CoreGraphics -framework CoreImage -framework ImageIO -framework QuartzCore -framework IOKit \
         -o "$BUILD_DIR/tools/probe_drag" tools/probe_drag.m history.m procs.m palette.m monitor_view.m vault.m vault_art.m vault_view.m backdrop.m quad.m

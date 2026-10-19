@@ -68,6 +68,10 @@ typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
 // 只给校验用：榜头那串读数。两条不变量（总≥任意一行、能耗榜头是比例不是自造单位绝对值）
 // 全靠它断言，不然改口径没人拦得住。
 - (NSString *)aggregateTextForMetric:(NSInteger)m;
+// 只给校验用：榜内某一行右端那串读数。"带不带单位、能耗是占比还是裸分"全靠这条钉住
+- (NSString *)valueTextFor:(DeskProc *)p metric:(NSInteger)m;
+// 能耗那一榜的分母（全部进程能耗分之和）。浮层和榜头、每行共用它，别各算各的。
+- (double)energyShareTotal;
 
 #pragma mark - 调角模式（和卡片面板 / 弹药库同一条路）
 // 变形时整张组件先画成正的、烘成位图，再按四角投影；没变形时走实时绘制，文字才是原生清晰度。
@@ -103,6 +107,8 @@ typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
 @property (nonatomic, assign) double mem;
 @property (nonatomic, assign) double energy;
 @property (nonatomic, assign) NSInteger sockets;
+// 能耗占比的分母，由组件本体喂进来（同一拍算好的 _energyTotal），浮层不再自己求和
+@property (nonatomic, assign) double energyTotal;
 // 悬停那一格的 12 小时平均（同一指标）与窗口内真正记录到的秒数
 @property (nonatomic, assign) double histAvg;
 @property (nonatomic, assign) double histCovered;

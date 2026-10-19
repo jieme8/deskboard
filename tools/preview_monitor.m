@@ -93,6 +93,7 @@ int main(int argc, const char *argv[]) {
         DeskMonitorHoverView *hv = [[DeskMonitorHoverView alloc] initWithFrame:NSMakeRect(0, 0, 214, 150)];
         hv.procName = @"UURemoteServer"; hv.pid = 4100; hv.uid = 501; hv.startedAt = 0;
         hv.cpu = 20.2; hv.mem = 486e6; hv.energy = 26.7; hv.sockets = 5;
+        hv.energyTotal = 184.0;   // 占比的分母：真实值由组件那一拍喂，这里给一组对得上的假数据
         hv.histMetric = DeskMonitorMetricCPU; hv.histAvg = 3.14; hv.histCovered = 12.0 * 3600.0;
         NSImage *himg = [NSImage imageWithSize:NSMakeSize(214 * scale, 150 * scale) flipped:YES
                               drawingHandler:^BOOL(NSRect r) {

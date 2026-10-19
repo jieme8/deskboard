@@ -847,6 +847,32 @@ int main(int argc, const char *argv[]) {
             Say([na hasPrefix:@"共"] && got >= 20.2,
                 @"网络榜头「%@」与每行同量纲，且 ≥ 榜内最大行", na);
             Say(got == want, @"榜头 %ld == 全部进程 socket 之和 %ld", (long)got, (long)want);
+            // 榜内每行也得自带单位：用户原话是"uu 显示 20.2"，一个没单位的数没法和榜头比
+            NSString *cpuRow = [mv valueTextFor:sc[0] metric:DeskMonitorMetricCPU];
+            Say([cpuRow hasSuffix:@"%"] && fabs([cpuRow doubleValue] - 20.2) < 0.05,
+                @"CPU 每行「%@」带 %%，数还是那个 20.2", cpuRow);
+            // 能耗每行原来就是那个 "191" —— 自造单位的裸分。现在是占比，且分母和榜头同一个
+            NSString *enRow = [mv valueTextFor:sc[0] metric:DeskMonitorMetricEnergy];
+            Say([enRow hasSuffix:@"%"] && [enRow doubleValue] <= 100.0,
+                @"能耗每行「%@」是占比，不再印没单位的裸分", enRow);
+            Say(fabs(mv.energyShareTotal - total) < 0.001,
+                @"分母只有一套：energyShareTotal %.1f == 独立求和 %.1f", mv.energyShareTotal, total);
+            Say(fabs([enRow doubleValue] - sc[0].energy / mv.energyShareTotal * 100.0) <= 1.0,
+                @"每行「%@」= 这一行的分 / 全部分之和", enRow);
+            {   // 全是 0 的那一拍不许把 nan% 印上屏
+                NSMutableArray<DeskProc *> *zx = [NSMutableArray array];
+                for (int i = 0; i < 3; i++) {
+                    DeskProc *p = [DeskProc new];
+                    p.pid = (pid_t)(6000 + i); p.name = [NSString stringWithFormat:@"z%d", i];
+                    p.cpu = 0; p.mem = 1; p.energy = 0; p.wakeups = 0; p.sockets = 0;
+                    [zx addObject:p];
+                }
+                [mv updateRows:zx];
+                NSString *zz = [mv valueTextFor:zx[0] metric:DeskMonitorMetricEnergy];
+                Say([zz hasSuffix:@"%"] && ![zz.lowercaseString containsString:@"nan"]
+                    && ![zz.lowercaseString containsString:@"inf"], @"能耗全 0 时读数「%@」不是 nan", zz);
+                [mv updateRows:sc];   // 恢复现场
+            }
         }
         {
             // 表头那串图例是后加的，它和右端时间戳之间必须留够缝 —— 进程数从 3 位涨到 4 位、
@@ -937,9 +963,9 @@ int main(int argc, const char *argv[]) {
         Say(mv.isWarped, @"角点归零但调角模式还开着 —— 仍在变形态，把手才画得出来");
         mv.editing = NO;
         Say(!mv.isWarped, @"退出调角且角点为零：回到实时绘制");
-        // 拖不动的根因：原来 mouseDown: 里自己开了个 nextEventMatchingMask 模态循环，
-        // 无边框非 key 的桌面层窗口收不到那条队列的拖拽事件，只能干等 8 秒超时。
-        // 所以这里最硬的一条断言是"mouseDown 立刻返回" —— 旧代码会卡满 8 秒。
+        // 这一段守"按下不阻塞、拖得动、松手只报一次"。注意它守的不是当年那个模态循环：
+        // 旧写法在合成事件下同样通过（已经实测证伪过一次）。真正的"拖不动"根因是调角模式
+        // 里 mouseDown 无条件 return，见下面那段新增断言。
         {
             NSWindow *dw = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, kMonitorViewWidth, kMonitorViewHeight)
                                                       styleMask:NSWindowStyleMaskBorderless
@@ -991,6 +1017,40 @@ int main(int argc, const char *argv[]) {
                 @"松手后 mouseDragged 不再挪窗（只有按住才拖）");
             [dv mouseUp:up];
             Say(moved == 1, @"没有按下就没有松手事件 —— 不会被误记成用户移动过");
+            // 真凶落网那条：调角模式里 mouseDown 原来无条件 return，整块组件一点都拖不动，
+            // 而同样开着调角的卡片面板、弹药库一直拖得动 —— 用户说的"活动监视器没法拖拉"
+            // 就是这个模式陷阱，不是遮挡（probe_clickcatcher 量到三块组件被同一批窗口压着）。
+            {
+                NSPoint midWin = [dv convertPoint:NSMakePoint(kMonitorViewWidth * 0.5,
+                                                              kMonitorViewHeight * 0.5) toView:nil];
+                NSEvent *mDown = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown
+                                                    location:midWin modifierFlags:0
+                                                   timestamp:[NSDate date].timeIntervalSince1970
+                                                windowNumber:dw.windowNumber context:nil
+                                                 eventNumber:7 clickCount:1 pressure:1.0];
+                NSEvent *mUp = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp
+                                                  location:midWin modifierFlags:0
+                                                 timestamp:[NSDate date].timeIntervalSince1970
+                                              windowNumber:dw.windowNumber context:nil
+                                               eventNumber:8 clickCount:1 pressure:0.0];
+                dv.editing = YES;
+                [dv mouseDown:mDown];
+                Say([dv isDragging], @"开着调角模式按正中间，照样进入拖窗态（和卡片面板同一规矩）");
+                [dv mouseUp:mUp];
+                NSRect rb = [dv resetButtonRect];
+                NSPoint btn = [dv convertPoint:NSMakePoint(NSMidX(rb), NSMidY(rb)) toView:nil];
+                NSEvent *bDown = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown
+                                                    location:btn modifierFlags:0
+                                                   timestamp:[NSDate date].timeIntervalSince1970
+                                                windowNumber:dw.windowNumber context:nil
+                                                 eventNumber:9 clickCount:1 pressure:1.0];
+                __block BOOL quadFired = NO;
+                dv.onQuadEdit = ^(DeskQuadOffsets q) { (void)q; quadFired = YES; };
+                [dv mouseDown:bDown];
+                Say(![dv isDragging], @"按在「复位角点」按钮上不拖窗 —— 调角和挪窗不抢同一帧");
+                Say(quadFired, @"复位按钮按下就提交角点归零");
+                dv.editing = NO;
+            }
             // 不 close：这个 CLI 里没有跑起来的 NSApp，关窗口会走到没有事件环境的销毁路径
             [dv mouseDown:down]; [dv mouseUp:up];
             [dw orderOut:nil];

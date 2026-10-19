@@ -32,6 +32,13 @@ static NSInteger MonCoreCount(void) {
     return cores;
 }
 
+// 能耗是"占全部进程的比例"，不是自造单位的绝对值（见 valueTextFor:）。分母 <=0 时给 0，
+// 不给 NaN —— 榜里印一个 "nan%" 就再没人信这块组件的数了。
+static double MonShare(double v, double total) {
+    if (total <= 0 || v <= 0) return 0;
+    return MAX(0.0, MIN(100.0, v / total * 100.0));
+}
+
 #define MC(r, g, b, a) [NSColor colorWithSRGBRed:(r) / 255.0 green:(g) / 255.0 blue:(b) / 255.0 alpha:(a)]
 
 // 悬停浮层自带一块固定深底（MC(4,18,36,.86)），底色不随系统外观翻，
@@ -123,6 +130,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     double _cellAvg[4][4];          // 12h 平均：同样只在换拍时算一次，绘制路径只读
     double _cellCov[4][4];          // 这一格里窗口内真正记录到的秒数（数据完不完整靠它）
     double _topShare;               // 能耗榜前四名占全部进程能耗的比例（0~1），换拍算一次
+    double _energyTotal;            // 全部进程能耗分之和 = 上面那个比例的分母，和 _topShare 同一次循环算出来
     NSInteger _totalSockets;          // 全部可读进程的 socket 总数：网络榜头要和每行同一个量纲
     // 调角模式：变形时整张组件先画成正的、烘成位图，再按四角投影（和弹药库同一条路）
     DeskQuadOffsets _quadOffsets;
@@ -191,6 +199,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         for (DeskProc *p in _all) if (p.energy > 0) total += p.energy;
         for (DeskProc *p in lists[DeskMonitorMetricEnergy]) if (p.energy > 0) top4 += p.energy;
         _topShare = total > 0 ? top4 / total : 0;
+        _energyTotal = total;
     }
     {   // 网络榜头的"共 N 个"：和每行同一个量纲，换拍算一次
         NSInteger sum = 0;
@@ -502,6 +511,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 }
 
 - (NSString *)aggregateTextForMetric:(NSInteger)m { return [self aggregateFor:m]; }
+- (double)energyShareTotal { return _energyTotal; }
 
 - (NSString *)aggregateFor:(NSInteger)m {
     switch (m) {
@@ -614,13 +624,19 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 
 - (NSString *)valueTextFor:(DeskProc *)p metric:(NSInteger)m {
     switch (m) {
-        case DeskMonitorMetricCPU: return [NSString stringWithFormat:@"%.1f", p.cpu];
+        // 每行也得带单位。原来 CPU 行印 "20.2"、榜头印 "133%"，同一榜两种写法，
+        // 用户读不出这是"占一个核"还是"占整机"。
+        case DeskMonitorMetricCPU: return [NSString stringWithFormat:@"%.1f%%", p.cpu];
         case DeskMonitorMetricMemory: {
             double mb = p.mem / 1048576.0;
             return mb >= 1024.0 ? [NSString stringWithFormat:@"%.1fG", mb / 1024.0]
                                 : [NSString stringWithFormat:@"%.0fM", mb];
         }
-        case DeskMonitorMetricEnergy: return [NSString stringWithFormat:@"%.1f", p.energy];
+        // 能耗每行原来是裸的分（用户撞上的就是那个 "191"）—— 单位是我按
+        // "CPU% + 唤醒次数×0.08" 造的，绝对值没有任何人能解读。换成占比：分母就是
+        // 榜头"前4占 xx%"用的同一个 _energyTotal（同一次循环算的，不留第二套真相）。
+        case DeskMonitorMetricEnergy: return [NSString stringWithFormat:@"%.0f%%",
+                                              MonShare(p.energy, _energyTotal)];
         default: return [NSString stringWithFormat:@"%ld", (long)p.sockets];
     }
 }
@@ -729,6 +745,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     _style = src->_style;
     _totalCPU = src->_totalCPU; _totalMemUsed = src->_totalMemUsed; _totalMemPhys = src->_totalMemPhys;
     _totalEnergy = src->_totalEnergy;
+    _energyTotal = src->_energyTotal;
     _procCount = src->_procCount;
     [self updateRows:src->_all];
     for (int m = 0; m < 4; m++)
@@ -827,18 +844,23 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 
 // 调角时整条鼠标轨迹只用来拖角。命中测试按未变形的矩形算，所以变形态下悬停是关掉的
 // （用户已确认这个取舍）—— 恢复成正的，悬停和双击看原生活动监视器都回来。
-- (void)trackCornerDrag:(NSEvent *)event {
+// 返回值 = 这一帧归不归调角。没命中角点也没命中复位按钮就交回窗口拖动，和卡片面板
+// panel_view.m:334、弹药库 vault_view.m:1415 是同一套写法。原来这里在 _editing 下无条件
+// return，一进调角模式整块组件就拖不动了 —— 用户报"活动监视器没法拖拉"，而同样开着调角
+// 的卡片和弹药库一直拖得动，差别就在这句。
+- (BOOL)trackCornerDrag:(NSEvent *)event {
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
     if (NSPointInRect(p, [self resetButtonRect])) {
         _quadOffsets = DeskQuadOffsetsZero();
         [self syncWarp];
         if (self.onQuadEdit) self.onQuadEdit(_quadOffsets);
         if (self.onGeometryChange) self.onGeometryChange();
-        return;
+        return YES;
     }
     // 只记角号，位移交给 mouseDragged:、提交交给 mouseUp:。
     // 原来这里也开着一个 8 秒模态循环，和窗口拖那处是同一个写法，一起统一掉。
     _dragCorner = DeskQuadHitTest(self.currentQuad, [self canvasPointFromEvent:event], 16.0);
+    return _dragCorner >= 0;
 }
 
 #pragma mark - 交互
@@ -872,7 +894,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     NSWindow *w = self.window;
     if (!w) return;
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
-    if (_editing) { [self trackCornerDrag:event]; return; }
+    if (_editing && [self trackCornerDrag:event]) return;
     NSInteger metric = -1;
     NSInteger row = [self hitTestRowAt:p in:self.bounds metric:&metric];
     if (row >= 0 && event.clickCount >= 2 && !self.isWarped) {
@@ -890,7 +912,9 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     // 是现成先例）。但**别把这段当成"拖不动"的已证根因**：我把旧那版模态循环装回来跑过
     // 合成事件对照，它在没有待处理事件时 nextEventMatchingMask 直接返回 nil 就 break，
     // 计时断言照样 0.000s 通过 —— 也就是说旧写法到底会不会让用户拖不动，我没有证据。
-    // 实测到的更可能原因是遮挡，见 tools/probe_occlusion.m。
+    // 遮挡那条也已经用 A/B 证伪：tools/probe_clickcatcher.m 量到三块组件被同一批窗口
+    // （Dock 那块 layer=20 的全屏窗 + 远程桌面的 INT32 覆盖层）100% 压着，卡片和弹药库
+    // 照样拖得动 —— 覆盖相等就不是差别。真正的差别是上面那句 _editing 无条件 return。
     _dragging = YES;
     _dragLogged = NO;
     _dragStartMouse = NSEvent.mouseLocation;
@@ -967,14 +991,17 @@ static NSString *MonUptime(long long startedAt) {
 - (BOOL)isFlipped { return YES; }
 
 // 12h 读数必须和这一行的即时值同一单位，否则并排放着还是看不懂
-static NSString *MonHistText(NSInteger metric, double avg, double covered) {
+static NSString *MonHistText(NSInteger metric, double avg, double covered, double energyTotal) {
     if (covered <= 0) return nil;
     switch (metric) {
         case DeskMonitorMetricCPU: return [NSString stringWithFormat:@"12h %.1f%%", avg];
         case DeskMonitorMetricMemory:
             return avg >= 1e9 ? [NSString stringWithFormat:@"12h %.1fG", avg / 1e9]
                               : [NSString stringWithFormat:@"12h %.0fM", avg / 1048576.0];
-        case DeskMonitorMetricEnergy: return [NSString stringWithFormat:@"12h %.1f", avg];
+        case DeskMonitorMetricEnergy:
+            // 分母没喂进来就宁可空着：印个 "12h 0%" 是假数据，比不印更糟
+            if (energyTotal <= 0) return nil;
+            return [NSString stringWithFormat:@"12h %.0f%%", MonShare(avg, energyTotal)];
         case DeskMonitorMetricNetwork: return [NSString stringWithFormat:@"12h %.0f 个", avg];
         default: return nil;
     }
@@ -1001,7 +1028,8 @@ static NSString *MonHistText(NSInteger metric, double avg, double covered) {
         { @"内存", _mem, DeskMonitorMetricMemory,
             _mem >= 1e9 ? [NSString stringWithFormat:@"%.1fG", _mem / 1e9]
                         : [NSString stringWithFormat:@"%.0fM", _mem / 1048576.0] },
-        { @"能耗（估）", _energy, DeskMonitorMetricEnergy, [NSString stringWithFormat:@"%.1f", _energy] },
+        { @"能耗（估）", _energy, DeskMonitorMetricEnergy, self.energyTotal > 0
+            ? [NSString stringWithFormat:@"%.0f%%", MonShare(_energy, self.energyTotal)] : @"—" },
         { @"网络·连接", (double)_sockets, DeskMonitorMetricNetwork, [NSString stringWithFormat:@"%ld", (long)_sockets] },
     };
     for (int i = 0; i < 4; i++) {
@@ -1019,7 +1047,7 @@ static NSString *MonHistText(NSInteger metric, double avg, double covered) {
         // 通常只出现在一榜里，拿同一个数去标另外三行就是假数据（实测错过一次：
         // histAvg=3.14 被内存行显示成 "12h 0M"、网络行显示成 "12h 3 个"）。
         NSString *hist = lines[i].metric == _histMetric
-            ? MonHistText(lines[i].metric, _histAvg, _histCovered) : nil;
+            ? MonHistText(lines[i].metric, _histAvg, _histCovered, self.energyTotal) : nil;
         if (hist.length) {
             CGFloat hx = NSMaxX(b) - 10 - MonWidth(lines[i].text, _valueFont) - 8
                          - MonWidth(hist, _metaFont);

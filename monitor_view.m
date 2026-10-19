@@ -564,9 +564,15 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     // 下面那根自带轨道，长度不足就是"长期比现在闲"，一眼读得出来。
     NSRect bar = [DeskMonitorView barRectInRow:row];            // 下：12h
     NSRect nowBar = [DeskMonitorView nowBarRectInRow:row];   // 上：现在
-    NSBezierPath *track = [NSBezierPath bezierPathWithRoundedRect:bar xRadius:kBarH / 2 yRadius:kBarH / 2];
-    [_pal.barTrack setFill];
-    [track fill];
+    // 轨道只在"这一格真记录到"的时候画。画一根空轨道读起来就是"12 小时平均 = 0"，
+    // 而真相是"还不知道"：刚重启的头一分钟、以及没进过追踪名单的进程，全都是空轨道，
+    // 整块板子会是一片假零 —— 和"191 没单位"是同一类毛病（读数说了它不该说的话）。
+    if (_cellCov[m][r] > 0) {
+        NSBezierPath *track = [NSBezierPath bezierPathWithRoundedRect:bar
+                                                              xRadius:kBarH / 2 yRadius:kBarH / 2];
+        [_pal.barTrack setFill];
+        [track fill];
+    }
     double frac = MAX(0.0, MIN(1.0, _cellFrac[m][r]));
     if (frac > 0.0) {
         NSRect knob = NSMakeRect(NSMinX(nowBar), NSMinY(nowBar),

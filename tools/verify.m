@@ -968,6 +968,27 @@ int main(int argc, const char *argv[]) {
                                             eventNumber:2 clickCount:1 pressure:0.0];
             [dv mouseUp:up];
             Say(![dv isDragging] && moved == 1, @"松手退出拖窗态，并且只报一次「用户亲手拖过」");
+            // 窗口真的会跟着动吗、动得对不对 —— 把光标位置做成参数才能测这一段。
+            // 基准必须用真实光标：mouseDown: 存的 _dragStartMouse 就是 NSEvent.mouseLocation，
+            // 拿窗口原点当起点算期望位移是错的（我第一版就这么错过一次）。
+            NSPoint cur = NSEvent.mouseLocation;
+            NSRect mv0 = dw.frame;
+            [dv dragWindowToMouse:NSMakePoint(cur.x + 50, cur.y - 30)];
+            NSRect mv1 = dw.frame;
+            Say(fabs((mv1.origin.x - mv0.origin.x) - 50.0) < 1.0
+                && fabs((mv1.origin.y - mv0.origin.y) + 30.0) < 1.0,
+                @"拖拽真的挪窗：窗口位移 (%+.0f,%+.0f) 跟上鼠标位移 (+50,-30)",
+                mv1.origin.x - mv0.origin.x, mv1.origin.y - mv0.origin.y);
+            [dv mouseUp:up];
+            NSRect mv2 = dw.frame;
+            NSEvent *drag2 = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDragged
+                                                location:NSMakePoint(999, 999) modifierFlags:0
+                                               timestamp:[NSDate date].timeIntervalSince1970
+                                            windowNumber:dw.windowNumber context:nil
+                                             eventNumber:3 clickCount:1 pressure:1.0];
+            [dv mouseDragged:drag2];
+            Say(fabs(dw.frame.origin.x - mv2.origin.x) < 1.0,
+                @"松手后 mouseDragged 不再挪窗（只有按住才拖）");
             [dv mouseUp:up];
             Say(moved == 1, @"没有按下就没有松手事件 —— 不会被误记成用户移动过");
             // 不 close：这个 CLI 里没有跑起来的 NSApp，关窗口会走到没有事件环境的销毁路径

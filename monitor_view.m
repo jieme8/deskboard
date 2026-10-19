@@ -908,15 +908,19 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         return;
     }
     if (!_dragging) return;
-    NSWindow *w = self.window;
-    if (!w) return;
     // 只记第一次拖拽事件：这台机器没有辅助功能权限、我没法自己拖，所以留一条证据链 ——
     // 万一还是拖不动，日志能立刻区分"事件根本没送到视图"和"送到了但算错了"
     if (!_dragLogged) {
         _dragLogged = YES;
         if (self.onLog) self.onLog([NSString stringWithFormat:@"收到拖拽事件，开始挪窗"]);
     }
-    [w setFrame:VaultDragFrame(_frameAtDragStart, _dragStartMouse, NSEvent.mouseLocation)
+    [self dragWindowToMouse:NSEvent.mouseLocation];
+}
+
+- (void)dragWindowToMouse:(NSPoint)mouseNow {
+    NSWindow *w = self.window;
+    if (!w) return;
+    [w setFrame:VaultDragFrame(_frameAtDragStart, _dragStartMouse, mouseNow)
         display:YES animate:NO];
 }
 

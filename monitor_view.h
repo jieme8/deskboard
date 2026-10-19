@@ -81,6 +81,10 @@ typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
 - (NSRect)resetButtonRect;
 // 只给校验/预览用：把"变形时烘的那张位图"要回来。烘 = syncWarp + refreshFlat，
 // 所以这条口能端到端验到素材源的状态对不对（条子空不空、外观换没换）。
+// 按"鼠标现在在屏幕上的哪里"把窗口挪过去。单独拆出来是因为 mouseDragged: 只能拿
+// NSEvent.mouseLocation（真实光标），而这台机器没有辅助功能权限、我没法动真光标 ——
+// 拆成参数之后"窗口到底会不会跟着动、动得对不对"就能被断言，而不是只能靠人手拖。
+- (void)dragWindowToMouse:(NSPoint)mouseNow;
 - (void)dragCorner:(NSInteger)corner toCanvasPoint:(NSPoint)p;
 - (NSBitmapImageRep *)bakedFlatBitmap;
 - (void)tick:(double)dt;

@@ -22,7 +22,7 @@ static long long LayerOf(CFDictionaryRef d) {
 static void Scan(CFArrayRef a, CFIndex n, NSInteger mine, CGRect target) {
     printf("目标 bounds=(%.0f, %.0f, %.0fx%.0f)，在全局前到后序列里排第 %ld\n",
            target.origin.x, target.origin.y, target.size.width, target.size.height, (long)mine);
-    int hits = 0, eaters = 0;
+    int hits = 0, eaters = 0; double worst = 0;
     for (CFIndex i = 0; i < mine; i++) {     // 只看在它前面的
         CFDictionaryRef d = CFArrayGetValueAtIndex(a, i);
         NSString *ow = (__bridge NSString *)CFDictionaryGetValue(d, kCGWindowOwnerName);
@@ -42,8 +42,21 @@ static void Scan(CFArrayRef a, CFIndex n, NSInteger mine, CGRect target) {
             // layer≈INT32 的投屏覆盖层都吃不了 —— 后者要是吃点击，整个桌面都点不动。
             // 这条规则是踩过坑才定下来的：早先一版 probe_occlusion 把投屏层算成遮挡，
             // 结论直接把人带偏一轮。所以"压着"必须分成两种，不然工具会自己骗人。
-            if (lyr >= 0 && lyr <= 10) eaters++;
+            // 吃点击的两种：① 普通层应用窗口（layer 0~10）；② **和我们同一层、还排在前面**的
+            // 窗口 —— Finder 管桌面图标的那块窗正是 -2147483603，和我们同层，同层之间比顺序，
+            // 它在前头就在它那块区域把点击拿走。macOS 默认图标从右上角开始排，而活动监视器
+            // 就贴右上 —— 这是三块组件里唯一可能天天和图标列重叠的一块，值得单独量出来。
+            if ((lyr >= 0 && lyr <= 10) || lyr == -2147483603LL) {
+                eaters++;
+                if (cover > worst) worst = cover;   // 部分压住也危险：抓在那半边就点到别人
+            }
         }
+    }
+    if (eaters && worst <= 0.99) {
+        // 只报"整块被压住"是不够的：真机抓到过一次左边 40% 被别的窗口侧栏盖住，
+        // 那时按 99% 判会得出"点得到"，而用户正好抓左边就点不到。
+        printf("→ 有普通层窗口压着它，最狠的一块盖住 %.0f%% → 抓没被盖住的那半边拖\n\n", worst * 100.0);
+        return;
     }
     printf(eaters ? "→ %d 个普通层窗口整个压着它（layer 0~10，真吃点击）→ 此刻点不到组件，不是 bug\n\n"
                   : (hits ? "→ 没有普通层窗口压着；另有 %d 个系统/覆盖层窗口（Dock、菜单栏、投屏层）——它们不吃点击\n\n"

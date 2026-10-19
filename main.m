@@ -211,6 +211,7 @@ static const CGFloat kVaultCoverShare = 0.25;
     BOOL _monitorHidden;
     NSInteger _monitorStyle;
     NSMenu *_monitorStyleMenu;
+    NSMenu *_monitorCornerMenu;
     NSMenuItem *_monitorItem;
     DeskQuadOffsets _monitorQuad;   // 活动监视器自己的四角位移，三块组件各调各的
     BOOL _monitorEditing;
@@ -992,6 +993,33 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     DeskLog(@"活动监视器角点已复位");
 }
 
+// 拖不动的时候（被别的窗口压住、或者鼠标事件到不了桌面层），用户得有一条不依赖
+// "按住组件"就能挪它的出路。摆位本来就存在 _monitorPlaces 里，这里只是给它一个菜单口。
+- (void)moveMonitorToCorner:(id)sender {
+    NSInteger corner = [sender tag];
+    for (NSScreen *screen in [NSScreen screens]) {
+        DeskPlace p = [_monitorPlaces placeForScreen:screen];
+        p.corner = corner;
+        [_monitorPlaces setPlace:p forKey:[_monitorPlaces keyForScreen:screen]];
+    }
+    [self applyMonitorFrames];
+    [self saveConfig];
+    [self syncMenu];
+    static const char *names[4] = { "左上", "右上", "左下", "右下" };
+    DeskLog(@"活动监视器摆到 %@（档位 dx/dy 保持不变）", [NSString stringWithUTF8String:names[corner & 3]]);
+}
+
+- (NSMenu *)cornerMenuForTitle:(NSString *)title action:(SEL)action {
+    NSMenu *m = [[NSMenu alloc] initWithTitle:title];
+    static const char *names[4] = { "左上角", "右上角", "左下角", "右下角" };
+    for (int i = 0; i < 4; i++) {
+        NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:[NSString stringWithUTF8String:names[i]] action:action keyEquivalent:@""];
+        it.tag = i;
+        [m addItem:it];
+    }
+    return m;
+}
+
 - (void)applyMonitorFrames {
     NSUInteger i = 0;
     for (NSScreen *screen in [NSScreen screens]) {
@@ -1432,6 +1460,9 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
     [self addSubmenuTo:mon title:@"外观"
                   menu:(_monitorStyleMenu = [self styleMenuForAction:@selector(chooseMonitorStyle:) title:@"活动监视器外观"])];
     [mon addItem:NSMenuItem.separatorItem];
+    [self addSubmenuTo:mon title:@"摆到（不用按住拖）"
+                  menu:(_monitorCornerMenu = [self cornerMenuForTitle:@"摆到"
+                                                              action:@selector(moveMonitorToCorner:)])];
     [mon addItem:NSMenuItem.separatorItem];
     _monitorEditItem = DeskAddAction(mon, @"调角模式", self, @selector(toggleMonitorEditing:));
     DeskAddAction(mon, @"复位角点", self, @selector(resetMonitorQuad:));
@@ -1466,6 +1497,12 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
     }
     _monitorItem.state = _monitorHidden ? NSControlStateValueOff : NSControlStateValueOn;
     _monitorEditItem.state = _monitorEditing ? NSControlStateValueOn : NSControlStateValueOff;
+    if (_monitorCornerMenu) {
+        NSInteger cur = [_monitorPlaces placeForScreen:NSScreen.mainScreen ?: NSScreen.screens.firstObject].corner;
+        for (NSMenuItem *it in _monitorCornerMenu.itemArray) {
+            it.state = it.tag == cur ? NSControlStateValueOn : NSControlStateValueOff;
+        }
+    }
     for (NSMenuItem *it in _monitorStyleMenu.itemArray) {
         it.state = it.tag == _monitorStyle ? NSControlStateValueOn : NSControlStateValueOff;
     }

@@ -954,7 +954,10 @@ int main(int argc, const char *argv[]) {
             NSTimeInterval t0 = [NSDate date].timeIntervalSince1970;
             [dv mouseDown:down];
             NSTimeInterval spent = [NSDate date].timeIntervalSince1970 - t0;
-            Say(spent < 0.5, @"mouseDown 立刻返回（%.3fs，旧代码要卡满 8s 模态循环）", spent);
+            // 只保证"mouseDown 自己不阻塞事件流"。它**不是**旧写法的回归网：我把旧那版模态
+            // 循环装回来实测过，计时断言同样 0.000s 通过（队列里没有待处理事件时
+            // nextEventMatchingMask 直接返回 nil 就 break）。别拿它当"旧代码会被抓住"。
+            Say(spent < 0.5, @"mouseDown 不阻塞事件流（%.3fs；实测它抓不到旧写法，只防自己变阻塞）", spent);
             Say([dv isDragging], @"按下后进入拖窗态");
             __block int moved = 0;
             dv.onUserMove = ^{ moved++; };

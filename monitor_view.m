@@ -836,26 +836,9 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         if (self.onGeometryChange) self.onGeometryChange();
         return;
     }
-    NSInteger corner = DeskQuadHitTest(self.currentQuad, [self canvasPointFromEvent:event], 16.0);
-    if (corner < 0) return;
-    _dragCorner = corner;
-    NSWindow *w = self.window;
-    while (YES) {
-        NSEvent *e = [w nextEventMatchingMask:(NSEventMaskLeftMouseUp | NSEventMaskLeftMouseDragged)
-                                    untilDate:[NSDate dateWithTimeIntervalSinceNow:8.0]
-                                       inMode:NSEventTrackingRunLoopMode dequeue:YES];
-        if (!e) break;
-        if (e.type == NSEventTypeLeftMouseDragged) {
-            [self dragCorner:_dragCorner toCanvasPoint:[self canvasPointFromEvent:e]];
-            _flatDirty = YES;
-            [self refreshFlat];
-            [self setNeedsDisplay:YES];
-            if (self.onGeometryChange) self.onGeometryChange();
-        } else break;
-    }
-    _dragCorner = -1;
-    if (self.onQuadEdit) self.onQuadEdit(_quadOffsets);
-    if (self.onGeometryChange) self.onGeometryChange();
+    // 只记角号，位移交给 mouseDragged:、提交交给 mouseUp:。
+    // 原来这里也开着一个 8 秒模态循环，和窗口拖那处是同一个写法，一起统一掉。
+    _dragCorner = DeskQuadHitTest(self.currentQuad, [self canvasPointFromEvent:event], 16.0);
 }
 
 #pragma mark - 交互
@@ -902,11 +885,11 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         if (self.onLog) self.onLog([NSString stringWithFormat:@"打开活动监视器看 pid %d", (int)pid]);
         return;
     }
-    // 只记下起点，真正挪窗口交给 mouseDragged:。
-    // 原来这里是在 mouseDown 里自己开一个 nextEventMatchingMask 模态循环 —— 无边框、
-    // 非 key、宿主又是 LSUIElement 从不激活的窗口根本收不到那条队列里的拖拽事件，
-    // 循环只能干等到 8 秒超时，用户看到的就是"拖不动"。卡片面板和弹药库都是
-    // mouseDown/mouseDragged/mouseUp 三段式，跟着它们走才对。
+    // 只记下起点，真正挪窗口交给 mouseDragged:。三段式和卡片面板/弹药库一致（那两块能拖，
+    // 是现成先例）。但**别把这段当成"拖不动"的已证根因**：我把旧那版模态循环装回来跑过
+    // 合成事件对照，它在没有待处理事件时 nextEventMatchingMask 直接返回 nil 就 break，
+    // 计时断言照样 0.000s 通过 —— 也就是说旧写法到底会不会让用户拖不动，我没有证据。
+    // 实测到的更可能原因是遮挡，见 tools/probe_occlusion.m。
     _dragging = YES;
     _dragLogged = NO;
     _dragStartMouse = NSEvent.mouseLocation;
@@ -915,6 +898,14 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 }
 
 - (void)mouseDragged:(NSEvent *)event {
+    if (_dragCorner >= 0) {
+        [self dragCorner:_dragCorner toCanvasPoint:[self canvasPointFromEvent:event]];
+        _flatDirty = YES;
+        [self refreshFlat];
+        [self setNeedsDisplay:YES];
+        if (self.onGeometryChange) self.onGeometryChange();
+        return;
+    }
     if (!_dragging) return;
     NSWindow *w = self.window;
     if (!w) return;
@@ -929,6 +920,12 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 }
 
 - (void)mouseUp:(NSEvent *)event {
+    if (_dragCorner >= 0) {
+        _dragCorner = -1;
+        if (self.onQuadEdit) self.onQuadEdit(_quadOffsets);      // 松手才落盘，拖的过程中不写
+        if (self.onGeometryChange) self.onGeometryChange();
+        return;
+    }
     if (!_dragging) return;
     _dragging = NO;
     if (self.onUserMove) self.onUserMove();   // 只有这条路径是"用户亲手拖过"

@@ -1122,6 +1122,27 @@ int main(int argc, const char *argv[]) {
                     @"按住拖动期间不再弹悬停浮层（回调次数停在 %d）", before);
                 [dv mouseUp:up];
             }
+            // 两条搬窗路不许打架：AppKit 的会话只要真的搬过（离开按下时的位置），
+            // mouseDragged: 就完全不插手；否则会把窗口反复推到它前面 = 抖动。
+            // 这条抓得住旧代码：没有守卫时，兜底那一路会按"按下时位置 + 零位移"把窗口拽回去。
+            {
+                NSRect f0 = dw.frame;
+                [dv mouseDown:down];
+                [dw setFrameOrigin:NSMakePoint(f0.origin.x + 33.0, f0.origin.y + 21.0)];
+                NSEvent *drag3 = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDragged
+                                                    location:NSMakePoint(120, 120) modifierFlags:0
+                                                   timestamp:[NSDate date].timeIntervalSince1970
+                                                windowNumber:dw.windowNumber context:nil
+                                                 eventNumber:21 clickCount:1 pressure:1.0];
+                [dv mouseDragged:drag3];
+                NSRect f1 = dw.frame;
+                Say(fabs(f1.origin.x - (f0.origin.x + 33.0)) < 0.6
+                    && fabs(f1.origin.y - (f0.origin.y + 21.0)) < 0.6,
+                    @"AppKit 搬过之后 mouseDragged 不再插手：留在 (%+.0f,%+.0f)",
+                    f1.origin.x - f0.origin.x, f1.origin.y - f0.origin.y);
+                [dv mouseUp:up];
+                [dw setFrameOrigin:f0.origin];
+            }
             // 不 close：这个 CLI 里没有跑起来的 NSApp，关窗口会走到没有事件环境的销毁路径
             [dv mouseDown:down]; [dv mouseUp:up];
             [dw orderOut:nil];

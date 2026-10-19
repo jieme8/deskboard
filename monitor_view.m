@@ -938,17 +938,22 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         if (self.onLog) self.onLog([NSString stringWithFormat:@"打开活动监视器看 pid %d", (int)pid]);
         return;
     }
-    // 只记下起点，真正挪窗口交给 mouseDragged:。三段式和卡片面板/弹药库一致（那两块能拖，
-    // 是现成先例）。但**别把这段当成"拖不动"的已证根因**：我把旧那版模态循环装回来跑过
-    // 合成事件对照，它在没有待处理事件时 nextEventMatchingMask 直接返回 nil 就 break，
-    // 计时断言照样 0.000s 通过 —— 也就是说旧写法到底会不会让用户拖不动，我没有证据。
-    // 遮挡那条也已经用 A/B 证伪：tools/probe_clickcatcher.m 量到三块组件被同一批窗口
-    // （Dock 那块 layer=20 的全屏窗 + 远程桌面的 INT32 覆盖层）100% 压着，卡片和弹药库
-    // 照样拖得动 —— 覆盖相等就不是差别。真正的差别是上面那句 _editing 无条件 return。
+    // 三段式和卡片面板/弹药库一致（那两块能拖，是现成先例）。
+    // 但"拖不动"的根因到现在**都还没有被证实过**，三条嫌疑全被我自己证伪或削弱了：
+    // ① 模态循环：装回旧写法跑合成事件，计时断言照样 0.000s 通过，抓不到；
+    // ② 遮挡：tools/probe_clickcatcher.m 量到三块组件被同一批窗口（Dock 的 layer=20 全屏窗
+    //    + 远程桌面的 INT32 覆盖层）100% 压着，而卡片和弹药库照样拖得动 —— 覆盖相等不是差别；
+    // ③ 调角模式里 mouseDown 无条件 return：那是个真 bug（已修），但日志里从来没有一条
+    //    活动监视器的调角开关，用户没进过那个模式。
+    // 现在这条路径不赌"mouseDragged 送不送得到"：让 AppKit 的拖拽会话从 mouseDown 就地接管，
+    // 窗口由窗口服务器搬；自己搬那套留着当兜底（见 mouseDragged: 里的幂等判断）。
     _dragging = YES;
     _dragLogged = NO;
     _dragStartMouse = NSEvent.mouseLocation;
     _frameAtDragStart = w.frame;
+    // 这个 API 在本 SDK 里返回 void，拿不到"它到底接管没有"的答复 —— 所以不猜，
+    // 只管调用，真正决定要不要自己搬的是 mouseDragged: 里那个"它搬过就没有我什么事"的判断。
+    [w performWindowDragWithEvent:event];
     [self setNeedsDisplay:YES];
 }
 
@@ -969,7 +974,14 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         if (self.onLog) self.onLog([NSString stringWithFormat:@"收到拖拽事件，开始挪窗"]);
     }
     NSPoint now = NSEvent.mouseLocation;
-    [self dragWindowToMouse:now];
+    // 两条路不许打架：只要 AppKit 的会话这一帧真的搬过窗口（离开过按下时的位置），
+    // 我们就完全不插手 —— 继续按自己的算式推会把窗口反复推到 AppKit 前面，看起来就是抖。
+    // 反过来，如果它一次都没搬（这台机器上 performWindowDragWithEvent: 到底生效率如何，
+    // 我没有真鼠标能验），就退回和卡片面板/弹药库一模一样的自己搬那条路。
+    NSWindow *wd = self.window;
+    BOOL appKitTookIt = wd && (fabs(wd.frame.origin.x - _frameAtDragStart.origin.x) > 0.5
+                            || fabs(wd.frame.origin.y - _frameAtDragStart.origin.y) > 0.5);
+    if (!appKitTookIt) [self dragWindowToMouse:now];
     // 弹药库靠这条 trace 把"拖得动"量成了事实（日志里 71 条，光标和窗口原点对得上）。
     // 监视器一条都没有过 —— 补上，用户试一次就能看出断在哪一环：
     // 有"按下"没"收到拖拽" = 拖拽事件根本没到；有"拖动中"但窗口原点不动 = 算错了；

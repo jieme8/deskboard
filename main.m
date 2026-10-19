@@ -1385,7 +1385,7 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     if (_screenSig && [sig isEqualToString:_screenSig]) {
         DeskLog(@"屏幕参数变更（配置指纹没变，只重申位置，不重建窗口）");
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{ [self reassertFrames]; });
+                       dispatch_get_main_queue(), ^{ [self reassertAllFrames]; });
         return;
     }
     _screenSig = sig;
@@ -1396,9 +1396,9 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     // 上一版这里只重建了卡片和弹药库，活动监视器就成了"改完外观后不再刷新"的那种幽灵窗口
     [self rebuildMonitorWindows];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{ [self reassertFrames]; });
+                   dispatch_get_main_queue(), ^{ [self reassertAllFrames]; });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{ [self reassertFrames]; });
+                   dispatch_get_main_queue(), ^{ [self reassertAllFrames]; });
 }
 
 - (void)reassertFrames {
@@ -1412,6 +1412,14 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
              display:YES animate:NO];
     }
     _applying = NO;
+}
+
+// 三块组件都要压住"系统迟到的迁移"。以前这件事是 rebuild 顺带做到的（重建 = 按存档重新
+// 摆一遍）；现在不重建了，就得自己把三块的位置按存档重申一遍 —— 只搬窗口，不销毁视图。
+- (void)reassertAllFrames {
+    [self reassertFrames];
+    [self applyVaultFrames];
+    [self applyMonitorFrames];
 }
 
 #pragma mark - 菜单栏

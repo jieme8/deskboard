@@ -118,6 +118,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     NSInteger _hoverMetric, _hoverRow;
     BOOL _dragging;
     BOOL _dragLogged;            // 本次拖拽是否已经记过日志
+    NSInteger _dragTraceTick;     // 拖动过程的采样计数器：每 8 帧打一条，和弹药库同一套
     NSPoint _dragStartMouse;      // 按下时鼠标的屏幕坐标
     NSRect _frameAtDragStart;     // 按下时窗口的位置
     NSRect _standInScreenRect;
@@ -954,7 +955,17 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         _dragLogged = YES;
         if (self.onLog) self.onLog([NSString stringWithFormat:@"收到拖拽事件，开始挪窗"]);
     }
-    [self dragWindowToMouse:NSEvent.mouseLocation];
+    NSPoint now = NSEvent.mouseLocation;
+    [self dragWindowToMouse:now];
+    // 弹药库靠这条 trace 把"拖得动"量成了事实（日志里 71 条，光标和窗口原点对得上）。
+    // 监视器一条都没有过 —— 补上，用户试一次就能看出断在哪一环：
+    // 有"按下"没"收到拖拽" = 拖拽事件根本没到；有"拖动中"但窗口原点不动 = 算错了；
+    // 原点跟着动了但"松手"后回到原位 = 摆位被别处重新应用了一次。
+    if (++_dragTraceTick % 8 == 0 && self.onLog) {
+        NSRect f = self.window.frame;
+        self.onLog([NSString stringWithFormat:@"拖动中 光标(%.0f,%.0f) 窗口原点(%.0f,%.0f)",
+                    now.x, now.y, f.origin.x, f.origin.y]);
+    }
 }
 
 - (void)dragWindowToMouse:(NSPoint)mouseNow {
@@ -974,6 +985,13 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     if (!_dragging) return;
     _dragging = NO;
     if (self.onUserMove) self.onUserMove();   // 只有这条路径是"用户亲手拖过"
+    if (self.onLog) {
+        NSRect f = self.window.frame;
+        self.onLog([NSString stringWithFormat:@"松手 位移(%+.0f,%+.0f) 拖了 %ld 帧 窗口原点(%.0f,%.0f)",
+                    f.origin.x - _frameAtDragStart.origin.x,
+                    f.origin.y - _frameAtDragStart.origin.y,
+                    (long)_dragTraceTick, f.origin.x, f.origin.y]);
+    }
     [self setNeedsDisplay:YES];
 }
 

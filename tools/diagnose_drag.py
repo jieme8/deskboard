@@ -18,12 +18,42 @@ PATTERNS = [
 ]
 
 
+def coverage():
+    """当场量一次"谁压着它"。0 按下的两种可能（被窗口压住 / 投递层坏了）在这里分开：
+    被压住是设计使然 —— 组件按硬约束永远在应用窗口之下，压着就点不到，不是 bug。"""
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    tool = next((c for c in (os.path.join(here, '..', 'build', 'tools', 'probe_clickcatcher'),
+                             os.path.join(here, 'probe_clickcatcher'))
+                 if os.path.exists(c)), None)
+    if not tool:
+        return None
+    r = subprocess.run([tool, '监视器'], capture_output=True, text=True)
+    return r.stdout
+
+
 def main():
     try:
         lines = open(LOG, encoding='utf-8', errors='replace').read().split('\n')
     except OSError:
         print('读不到日志：%s' % LOG)
         return 2
+
+    cov = coverage()
+    if cov:
+        eaters = []
+        for l in cov.split('\n'):
+            m = re.search(r'layer=(-?\d+)\s+覆盖(\d+)%\s+(.*)$', l)
+            if not m:
+                continue
+            layer, cover, who = int(m.group(1)), int(m.group(2)), m.group(3).strip()
+            # 只认"普通层的应用窗口"才吃点击：layer 0~10。
+            # Dock(20)/菜单栏(24) 这类系统 UI 和 layer≈INT32 的投屏覆盖层都不吃点击 ——
+            # 后者要是吃点击，整个桌面都点不动了（这个坑 probe_occlusion 第一版踩过）。
+            if 0 <= layer <= 10 and cover >= 99:
+                eaters.append('%s（layer=%d）' % (who, layer))
+        print('当场覆盖：%s' % ('**被这些窗口整个压住 → 点它必然点不到，不是 bug**：' + '；'.join(eaters)
+                                if eaters else '没有普通层窗口整个压着它 → 点得到，拖不动就要看下面的链路'))
 
     start = max((i for i, l in enumerate(lines) if '进程启动' in l), default=0)
     blk = lines[start:]

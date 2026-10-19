@@ -1074,6 +1074,54 @@ int main(int argc, const char *argv[]) {
                 Say(quadFired, @"复位按钮按下就提交角点归零");
                 dv.editing = NO;
             }
+            // tracking area 的选项集是"拖不动"最后一处事件路由不对称：三块组件里只有监视器
+            // 带过 NSTrackingEnabledDuringMouseDrag（按住拖动期间还收 mouseMoved，而 mouseMoved
+            // 会去弹悬停浮层 = 在鼠标按下时把另一块窗口顶上来）。这条断言钉住它不许回来。
+            {
+                [dv updateTrackingAreas];   // CLI 里没人调它，不手动补一次 trackingAreas 是空的
+                NSTrackingAreaOptions opt = dv.trackingAreas.firstObject.options;
+                Say(dv.trackingAreas.count > 0, @"视图挂着悬停用的 tracking area");
+                Say(!(opt & NSTrackingEnabledDuringMouseDrag),
+                    @"tracking area 不带 NSTrackingEnabledDuringMouseDrag（拖拽期间不再收 mouseMoved）");
+                Say((opt & NSTrackingActiveAlways) != 0,
+                    @"但保留 ActiveAlways —— 桌面层窗口永远不是 key，否则悬停是死的");
+                // 两侧都要测：没按住时悬停必须真的会动，否则"按住时不动"是假通过
+                NSMutableArray<DeskProc *> *hv = [NSMutableArray array];
+                for (int i = 0; i < 8; i++) {
+                    DeskProc *p = [DeskProc new];
+                    p.pid = (pid_t)(7100 + i); p.name = [NSString stringWithFormat:@"h%d", i];
+                    p.cpu = 30.0 - i; p.mem = 2e8; p.energy = 20.0 - i; p.wakeups = 4; p.sockets = 2;
+                    [hv addObject:p];
+                }
+                [dv updateRows:hv];
+                __block int hoverFired = 0;
+                dv.onHover = ^(pid_t pid, NSRect row, NSInteger metric, double avg, double covered) {
+                    (void)row; (void)metric; (void)avg; (void)covered; if (pid > 0) hoverFired++;
+                };
+                NSRect r0 = [dv rowRectAtMetric:DeskMonitorMetricCPU row:0 in:dv.bounds];
+                NSPoint p0 = [dv convertPoint:NSMakePoint(NSMidX(r0), NSMidY(r0)) toView:nil];
+                NSEvent *mv0 = [NSEvent mouseEventWithType:NSEventTypeMouseMoved location:p0
+                                             modifierFlags:0 timestamp:[NSDate date].timeIntervalSince1970
+                                              windowNumber:dw.windowNumber context:nil
+                                               eventNumber:12 clickCount:1 pressure:1.0];
+                [dv mouseMoved:mv0];
+                Say(hoverFired == 1, @"没按住时移到某一行上，悬停回调真的会响（%d 次）", hoverFired);
+                NSRect r2 = [dv rowRectAtMetric:DeskMonitorMetricCPU row:2 in:dv.bounds];
+                NSPoint p2 = [dv convertPoint:NSMakePoint(NSMidX(r2), NSMidY(r2)) toView:nil];
+                NSEvent *mv2 = [NSEvent mouseEventWithType:NSEventTypeMouseMoved location:p2
+                                             modifierFlags:0 timestamp:[NSDate date].timeIntervalSince1970
+                                              windowNumber:dw.windowNumber context:nil
+                                               eventNumber:13 clickCount:1 pressure:1.0];
+                [dv mouseDown:[NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:p0
+                                             modifierFlags:0 timestamp:[NSDate date].timeIntervalSince1970
+                                              windowNumber:dw.windowNumber context:nil
+                                               eventNumber:14 clickCount:1 pressure:1.0]];
+                int before = hoverFired;
+                [dv mouseMoved:mv2];
+                Say(hoverFired == before && [dv isDragging],
+                    @"按住拖动期间不再弹悬停浮层（回调次数停在 %d）", before);
+                [dv mouseUp:up];
+            }
             // 不 close：这个 CLI 里没有跑起来的 NSApp，关窗口会走到没有事件环境的销毁路径
             [dv mouseDown:down]; [dv mouseUp:up];
             [dw orderOut:nil];

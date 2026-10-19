@@ -162,14 +162,17 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 - (BOOL)isFlipped { return YES; }
 - (BOOL)acceptsFirstMouse:(NSEvent *)e { return YES; }
 
-// 桌面层窗口永远不是 key，用 NSTrackingActiveInKeyWindow 的话悬停根本不投递
+// 桌面层窗口永远不是 key，用 NSTrackingActiveInKeyWindow 的话悬停根本不投递。
+// **不要加 NSTrackingEnabledDuringMouseDrag**：那是三块组件里只有监视器带过的一项，
+// 它让 tracking area 在"按住拖动"期间继续收 mouseMoved —— 而 mouseMoved: 会去弹悬停浮层
+// （另一块窗口 orderFrontRegardless），正好落在鼠标按下的窗口期里。日志侧的对得上：
+// 监视器的 mouseDown 到得了（10:55 双击那条），而「收到拖拽事件」整份历史一次都没有。
 - (void)updateTrackingAreas {
     [super updateTrackingAreas];
     if (_track) [self removeTrackingArea:_track];
     _track = [[NSTrackingArea alloc] initWithRect:self.bounds
                                           options:(NSTrackingMouseMoved | NSTrackingMouseEnteredAndExited
-                                                   | NSTrackingActiveAlways | NSTrackingAssumeInside
-                                                   | NSTrackingEnabledDuringMouseDrag)
+                                                   | NSTrackingActiveAlways | NSTrackingAssumeInside)
                                             owner:self userInfo:nil];
     [self addTrackingArea:_track];
 }
@@ -882,6 +885,10 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 
 - (void)mouseMoved:(NSEvent *)event {
     if (self.isWarped) return;   // 变形时不响应悬停：见 -trackCornerDrag: 那段的说明
+    // 按住拖动期间不许弹悬停浮层：那是在鼠标按下时把**另一块窗口**顶上来，
+    // 拖拽会话正归本窗口所有，这时候动别的窗口没有道理，也正是上面那条 tracking area
+    // 注释里被怀疑的行为。松手后鼠标再动一下就恢复正常悬停。
+    if (_dragging || _dragCorner >= 0) return;
     [self moveHoverFromEvent:event];
 }
 - (void)mouseExited:(NSEvent *)event {

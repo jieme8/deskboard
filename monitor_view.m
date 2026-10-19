@@ -971,8 +971,16 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 - (void)dragWindowToMouse:(NSPoint)mouseNow {
     NSWindow *w = self.window;
     if (!w) return;
-    [w setFrame:VaultDragFrame(_frameAtDragStart, _dragStartMouse, mouseNow)
-        display:YES animate:NO];
+    // 原来这里用 `setFrame:display:animate:NO` —— 三块组件里只有它用这个带 animate 的版本：
+    // 卡片是 `setFrameOrigin:`（panel_view.m:360），弹药库是 `setFrame:display:`（vault_view.m:1491），
+    // 那两块真鼠标下都拖得动（弹药库日志里 71 条「拖动中」逐帧跟得上光标）。
+    // animate: 那一版走的是"帧变更事务"路径：一次变更还在飞行中时，后续调用会被合并/忽略，
+    // 而拖动正是每秒几十次的连续调用 —— 单次调用我的断言照样过，只有真鼠标的连续流才暴露它。
+    // 这是代码里剩下的最后一处不对称，所以先对齐到能用的先例上。
+    // **别把它写成"已证根因"**：负向对照量过，把这一行换回 `setFrame:display:animate:NO`，
+    // 216 条断言一条都不动 —— 校验 CLI 里没有真窗口服务器事务，这条差异只有真鼠标能判。
+    // 判据在日志里：拖动过程有没有「拖动中 光标… 窗口原点…」，原点跟不跟得上光标。
+    [w setFrameOrigin:VaultDragFrame(_frameAtDragStart, _dragStartMouse, mouseNow).origin];
 }
 
 - (void)mouseUp:(NSEvent *)event {

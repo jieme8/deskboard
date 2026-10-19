@@ -1007,6 +1007,28 @@ int main(int argc, const char *argv[]) {
                 mv1.origin.x - mv0.origin.x, mv1.origin.y - mv0.origin.y);
             [dv mouseUp:up];
             NSRect mv2 = dw.frame;
+            // 单次调用挪对了不代表连续调用挪得对 —— 真鼠标拖动是每秒几十次连续设位。
+            // 逐帧喂 30 步，要求每一步都真的落到那一步的位置。
+            // 注意这条**分不出** `setFrameOrigin:` 和 `setFrame:display:animate:NO`（实测换回
+            // animate: 那版照样 216/0）：它守的是挪位算术和"每步都落位"，API 差异只有真鼠标能判。
+            {
+                NSPoint cur2 = NSEvent.mouseLocation;
+                // 先按"当前光标"落一个基准帧：dragWindowToMouse: 的算法是
+                // 起点帧 + (现在光标 - 按下时光标)，而 _dragStartMouse 是上一次按下留下的，
+                // 不先对齐基准就会拿错的参照去比（第一版就这么假失败了一次）。
+                [dv dragWindowToMouse:cur2];
+                NSRect base = dw.frame;
+                int bad = 0;
+                for (int s = 1; s <= 30; s++) {
+                    NSPoint want = NSMakePoint(base.origin.x + s * 4.0, base.origin.y - s * 2.0);
+                    [dv dragWindowToMouse:NSMakePoint(cur2.x + s * 4.0, cur2.y - s * 2.0)];
+                    NSRect got = dw.frame;
+                    if (fabs(got.origin.x - want.x) > 0.6 || fabs(got.origin.y - want.y) > 0.6) bad++;
+                }
+                Say(bad == 0, @"连续 30 步逐帧挪位，每步都落到目标位置（丢帧 %d 步）", bad);
+                // 还原到这一段开始前的位置：下一条断言拿 mv2 当参照，别把现场留在别处
+                [dw setFrameOrigin:mv2.origin];
+            }
             NSEvent *drag2 = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDragged
                                                 location:NSMakePoint(999, 999) modifierFlags:0
                                                timestamp:[NSDate date].timeIntervalSince1970

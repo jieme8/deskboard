@@ -576,6 +576,15 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         [_pal.barTrack setFill];
         [track fill];
     }
+    // 上面这根也必须有自己的槽。卡片面板的条子从来是"槽 + 填充"一套（panel_view.m 的
+    // drawBar:track:），这里以前只给下面那根画槽，结果上面是裸条、下面是一整根横贯行宽的灰线，
+    // 读起来就是"多出一根没人解释的线"（用户问的"第二根线"）。两根都装槽才是一对同尺度的量表。
+    {
+        NSBezierPath *nowTrack = [NSBezierPath bezierPathWithRoundedRect:nowBar
+                                                 xRadius:kBarH / 2 yRadius:kBarH / 2];
+        [_pal.barTrack setFill];
+        [nowTrack fill];
+    }
     double frac = MAX(0.0, MIN(1.0, _cellFrac[m][r]));
     if (frac > 0.0) {
         NSRect knob = NSMakeRect(NSMinX(nowBar), NSMinY(nowBar),

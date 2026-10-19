@@ -73,6 +73,21 @@ int main(int argc, const char *argv[]) {
             v.procCount = (NSInteger)rows.count;
             v.totalCPU = 37; v.totalMemUsed = 23e9; v.totalMemPhys = 24e9;
             v.totalEnergy = 89.6;
+            // 受控实验：给每一格喂一个"12h 平均 = 现在的 35%"，好让淡条有确定的长度和位置，
+            // 才能拿像素量它到底看不看得出来（真实数据里 12h 常常只差几个百分点，量不出结论）
+            v.historyForPid = ^double(pid_t pid, DeskHistMetric hm, double *covered) {
+                if (covered) *covered = 12.0 * 3600.0;
+                for (DeskProc *q in rows) {
+                    if (q.pid != pid) continue;
+                    switch (hm) {
+                        case DeskHistCPU: return q.cpu * 0.35;
+                        case DeskHistMemory: return q.mem * 0.35;
+                        case DeskHistEnergy: return q.energy * 0.35;
+                        default: return (double)q.sockets * 0.35;
+                    }
+                }
+                return 0;
+            };
             for (int k = 0; k < 60; k++) [v tick:1.0 / 60.0];   // 让条子先长到位
             // 悬停态要跟着出厂那档（Bare）出一张：这一档的悬停不再藏指标条，得肉眼过一遍
             BOOL hoverThis = (i == 0 || i == 2);

@@ -901,6 +901,14 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 - (void)mouseDown:(NSEvent *)event {
     NSWindow *w = self.window;
     if (!w) return;
+    // 这条日志是"拖不动"的唯一判据，所以必须打在**任何提前 return 之前**：
+    // 有这行 = 事件送到了视图，问题在算法；没这行 = 事件根本没到，问题在层序/吃点击的窗口。
+    // 我这侧没有辅助功能权限，动不了真光标，只能靠这一行把两种情况分开。
+    if (self.onLog) {
+        self.onLog([NSString stringWithFormat:@"按下：调角=%d 变形=%d 双击=%ld 窗原点(%.0f,%.0f)",
+                    _editing, self.isWarped, (long)event.clickCount,
+                    w.frame.origin.x, w.frame.origin.y]);
+    }
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
     if (_editing && [self trackCornerDrag:event]) return;
     NSInteger metric = -1;

@@ -48,6 +48,22 @@ int main(int argc, const char **argv) {
         CFArrayRef a = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
         CFIndex n = CFArrayGetCount(a);
         int shown = 0;
+        // rect 模式：`probe_clickcatcher rect X Y W H`。换摆位本来要靠改存档，但 cfprefsd 会
+        // 把内存里那份盖回磁盘（实测 plutil 改完重启，窗口纹丝不动），所以干脆不搬组件 ——
+        // 前到后序列是全局的，"某个矩形会被谁压住"直接按候选矩形算，不用真搬过去。
+        if ([want isEqualToString:@"rect"] && argc >= 6) {
+            CGRect r = CGRectMake(atof(argv[2]), atof(argv[3]), atof(argv[4]), atof(argv[5]));
+            CFIndex idx = n;
+            for (CFIndex i = 0; i < n; i++) {
+                CFDictionaryRef d = CFArrayGetValueAtIndex(a, i);
+                NSString *ow = (__bridge NSString *)CFDictionaryGetValue(d, kCGWindowOwnerName);
+                if ([ow isEqualToString:@"DeskBoard"] && LayerOf(d) == -2147483603) { idx = i; break; }
+            }
+            printf("候选矩形 (%.0f,%.0f,%.0fx%.0f)，按桌面层组件在序列里的第 %ld 位算\n",
+                   r.origin.x, r.origin.y, r.size.width, r.size.height, (long)idx);
+            Scan(a, n, idx, r);
+            return 0;
+        }
         for (CFIndex i = 0; i < n; i++) {
             CFDictionaryRef d = CFArrayGetValueAtIndex(a, i);
             NSString *ow = (__bridge NSString *)CFDictionaryGetValue(d, kCGWindowOwnerName);

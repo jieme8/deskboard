@@ -570,7 +570,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     // 轨道只在"这一格真记录到"的时候画。画一根空轨道读起来就是"12 小时平均 = 0"，
     // 而真相是"还不知道"：刚重启的头一分钟、以及没进过追踪名单的进程，全都是空轨道，
     // 整块板子会是一片假零 —— 和"191 没单位"是同一类毛病（读数说了它不该说的话）。
-    if (_cellCov[m][r] > 0) {
+    if ([self showsHistoryTrackAtMetric:m row:r]) {
         NSBezierPath *track = [NSBezierPath bezierPathWithRoundedRect:bar
                                                               xRadius:kBarH / 2 yRadius:kBarH / 2];
         [_pal.barTrack setFill];
@@ -636,6 +636,14 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     if (m < 0 || m > 3 || r < 0 || r >= kMonitorRowsPerQuadrant) return 0;
     return _cellAvg[m][r];
 }
+// 这一格该不该画 12h 那根的槽。规矩只有一句：没有记录就没有槽 ——
+// 空槽读起来是"12 小时平均 = 0"，而真相是"还不知道"（和"191 没单位"同一类毛病）。
+// 单独开成方法是为了让 verify.m 能断言它，不然这条只能靠肉眼守。
+- (BOOL)showsHistoryTrackAtMetric:(NSInteger)m row:(NSInteger)r {
+    if (m < 0 || m > 3 || r < 0 || r >= kMonitorRowsPerQuadrant) return NO;
+    return _cellCov[m][r] > 0;
+}
+
 - (double)historyCoveredAtMetric:(NSInteger)m row:(NSInteger)r {
     if (m < 0 || m > 3 || r < 0 || r >= kMonitorRowsPerQuadrant) return 0;
     return _cellCov[m][r];

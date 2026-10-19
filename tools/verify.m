@@ -874,6 +874,38 @@ int main(int argc, const char *argv[]) {
                 [mv updateRows:sc];   // 恢复现场
             }
         }
+
+        printf("\n活动监视器：12 小时那根的槽该不该画（没有记录就没有槽）\n");
+        {
+            // 这里以前从没设过 historyForPid —— 整条 12h 路径在断言里根本没跑到过。
+            // 喂两种格子：偶数 pid"真记录到 12 小时"、奇数 pid"没记录"，看槽的开关对不对。
+            // pid 从 8100 起、CPU 递减，所以排名顺序不变，第 r 行的 pid 就是 8100+r。
+            NSMutableArray<DeskProc *> *hh = [NSMutableArray array];
+            for (int i2 = 0; i2 < 8; i2++) {
+                DeskProc *q = [DeskProc new];
+                q.pid = (pid_t)(8100 + i2); q.name = [NSString stringWithFormat:@"g%d", i2];
+                q.cpu = 15.0 - i2; q.mem = 2e8; q.energy = 12.0 - i2; q.wakeups = 3; q.sockets = 2;
+                [hh addObject:q];
+            }
+            mv.historyForPid = ^double(pid_t pid, DeskHistMetric hm, double *covered) {
+                BOOL known = (pid % 2) == 0;
+                if (covered) *covered = known ? 12.0 * 3600.0 : 0.0;
+                return known ? 5.0 : 0.0;
+            };
+            [mv updateRows:hh];
+            int bad = 0;
+            for (int r = 0; r < kMonitorRowsPerQuadrant; r++) {
+                BOOL should = ((8100 + r) % 2) == 0;
+                if ([mv showsHistoryTrackAtMetric:DeskMonitorMetricCPU row:r] != should) bad++;
+                BOOL cov = [mv historyCoveredAtMetric:DeskMonitorMetricCPU row:r] > 0;
+                if (cov != should) bad++;
+            }
+            Say(bad == 0, @"有记录的格子才画槽，没记录的整根不画（%d 行里错 %d 处）",
+                (int)kMonitorRowsPerQuadrant, bad);
+            Say([mv historyAverageAtMetric:DeskMonitorMetricCPU row:0] > 0,
+                @"第 0 行（偶数 pid）的 12h 平均值确实取到了");
+            mv.historyForPid = nil;
+        }
         {
             // 表头那串图例是后加的，它和右端时间戳之间必须留够缝 —— 进程数从 3 位涨到 4 位、
             // 或图例再长一点，就会无声地撞上。这里按最坏情况（4 位进程数）量一次。

@@ -72,7 +72,7 @@ int main(int argc, const char *argv[]) {
             [v setStandInScreenRect:StandIn()];
             v.procCount = (NSInteger)rows.count;
             v.totalCPU = 37; v.totalMemUsed = 23e9; v.totalMemPhys = 24e9;
-            v.totalEnergy = 89.6; v.totalNetIn = 1.4e6; v.totalNetOut = 1.7e6;
+            v.totalEnergy = 89.6;
             for (int k = 0; k < 60; k++) [v tick:1.0 / 60.0];   // 让条子先长到位
             // 悬停态要跟着出厂那档（Bare）出一张：这一档的悬停不再藏指标条，得肉眼过一遍
             BOOL hoverThis = (i == 0 || i == 2);

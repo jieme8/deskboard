@@ -1057,8 +1057,6 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
             v.totalCPU = st.cpu;
             v.totalMemUsed = st.memUsed;
             v.totalMemPhys = st.memTotal;
-            v.totalNetIn = st.netRecv;
-            v.totalNetOut = st.netSend;
         }
         v.totalEnergy = energySum;
         v.procCount = rows.count;

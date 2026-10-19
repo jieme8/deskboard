@@ -20,13 +20,13 @@ typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
 };
 
 @interface DeskMonitorView : NSView
-// 系统总量（榜头那四个读数）：CPU 0~100、内存已用/物理字节、能耗合计、网络 B/s
+// 系统总量（榜头读数）：CPU 是整机 0~100（榜头自己换算成全核），内存是已用/物理字节。
+// 网络榜头不再吃系统 B/s —— 那是"速率"，和榜内每行的"连接数"不是同一个量，
+// 并排放着就会重演"总 CPU 比单进程还小"那个困惑。整机网速在卡片面板上有（↓41K ↑12K）。
 @property (nonatomic, assign) double totalCPU;
 @property (nonatomic, assign) double totalMemUsed;
 @property (nonatomic, assign) double totalMemPhys;
 @property (nonatomic, assign) double totalEnergy;
-@property (nonatomic, assign) double totalNetIn;
-@property (nonatomic, assign) double totalNetOut;
 @property (nonatomic, assign) NSInteger procCount;         // "你的进程 N 个"
 @property (nonatomic, assign) DeskStyle style;
 @property (nonatomic, copy) void (^onLog)(NSString *message);

@@ -122,6 +122,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     double _cellAvg[4][4];          // 12h 平均：同样只在换拍时算一次，绘制路径只读
     double _cellCov[4][4];          // 这一格里窗口内真正记录到的秒数（数据完不完整靠它）
     double _topShare;               // 能耗榜前四名占全部进程能耗的比例（0~1），换拍算一次
+    NSInteger _totalSockets;          // 全部可读进程的 socket 总数：网络榜头要和每行同一个量纲
     // 调角模式：变形时整张组件先画成正的、烘成位图，再按四角投影（和弹药库同一条路）
     DeskQuadOffsets _quadOffsets;
     BOOL _editing;
@@ -189,6 +190,11 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         for (DeskProc *p in _all) if (p.energy > 0) total += p.energy;
         for (DeskProc *p in lists[DeskMonitorMetricEnergy]) if (p.energy > 0) top4 += p.energy;
         _topShare = total > 0 ? top4 / total : 0;
+    }
+    {   // 网络榜头的"共 N 个"：和每行同一个量纲，换拍算一次
+        NSInteger sum = 0;
+        for (DeskProc *p in _all) if (p.sockets > 0) sum += p.sockets;
+        _totalSockets = sum;
     }
 
     // 名字截断要量字宽，每帧 16 行都量一遍就是肉眼可见的开销，所以只在数据变更时算一次
@@ -515,12 +521,11 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
             // 且正是这一榜用途的数：前四名吃掉多少比例。
             if (_topShare <= 0) return @"—";   // 守卫只看 _topShare：它和读数同源，别拿外部喂的 _totalEnergy 当第二套真相
             return [NSString stringWithFormat:@"前4占 %.0f%%", MAX(0.0, MIN(100.0, _topShare * 100.0))];
-        default: {
-            double kb = (MAX(0, _totalNetIn) + MAX(0, _totalNetOut)) / 1024.0;
-            if (kb < 1.0) return @"静默";
-            if (kb < 1024.0) return [NSString stringWithFormat:@"%.0fK/s", kb];
-            return [NSString stringWithFormat:@"%.1fM/s", kb / 1024.0];
-        }
+        default:
+            // 原来是系统总速率（48K/s）配一堆连接数（5、4、4）—— 榜头是"速率"、每行是"个数"，
+            // 和单位换算那条是同一个毛病，只是还没被人撞上。改成同量纲的总数。
+            if (_totalSockets <= 0) return @"—";
+            return [NSString stringWithFormat:@"共 %ld 个", (long)_totalSockets];
     }
 }
 
@@ -722,7 +727,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 - (void)takeSnapshotFrom:(DeskMonitorView *)src {
     _style = src->_style;
     _totalCPU = src->_totalCPU; _totalMemUsed = src->_totalMemUsed; _totalMemPhys = src->_totalMemPhys;
-    _totalEnergy = src->_totalEnergy; _totalNetIn = src->_totalNetIn; _totalNetOut = src->_totalNetOut;
+    _totalEnergy = src->_totalEnergy;
     _procCount = src->_procCount;
     [self updateRows:src->_all];
     for (int m = 0; m < 4; m++)

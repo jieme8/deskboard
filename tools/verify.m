@@ -839,6 +839,14 @@ int main(int argc, const char *argv[]) {
             double top4 = 0; for (int i = 0; i < 4; i++) top4 += sc[i].energy;
             Say(fabs(pct - top4 / total * 100.0) <= 1.0,
                 @"前4占 %.0f%% 与独立算出的 %.1f%% 对得上", pct, top4 / total * 100.0);
+            // 网络榜：榜头以前是系统总速率(48K/s)，每行却是连接数(5) —— 和 #4 同一个毛病，
+            // 只是还没被人撞上。现在两边都是"个数"，所以总 ≥ 任意一行必须成立。
+            NSString *na = [mv aggregateTextForMetric:DeskMonitorMetricNetwork];
+            NSInteger got = (NSInteger)[[na substringFromIndex:2] doubleValue];   // 跳过「共 」「空格」
+            NSInteger want = 0; for (DeskProc *p in sc) want += p.sockets;
+            Say([na hasPrefix:@"共"] && got >= 20.2,
+                @"网络榜头「%@」与每行同量纲，且 ≥ 榜内最大行", na);
+            Say(got == want, @"榜头 %ld == 全部进程 socket 之和 %ld", (long)got, (long)want);
         }
         {
             // 表头那串图例是后加的，它和右端时间戳之间必须留够缝 —— 进程数从 3 位涨到 4 位、

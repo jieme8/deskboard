@@ -56,6 +56,28 @@ macOS 桌面挂件。纯 Objective-C + AppKit，无第三方依赖，一条 `bui
 `mutableCopy` 之后下一拍追加会撞 `-[__NSArrayI setObject:atIndexedSubscript:]`，而且只有"重启后
 正好又采到同一 pid 的同一分钟"才炸 —— 表现为偶发 SIGABRT。
 
+## 组件"点不动 / 拖不动"的排查顺序
+
+**先查遮挡，再改代码** —— 三块组件都在 `kCGDesktopIconWindowLevel`（桌面图标层），
+任何一个全屏窗口（远程桌面、投屏、某些截图/会议软件的覆盖层）压在它上面时，鼠标事件
+根本送不到组件，这时候改拖拽代码是白改。一条命令就能分清：
+
+```
+./build/tools/probe_occlusion
+```
+
+它按"从前到后"的窗口顺序，看第一个盖住每块组件中心点的是不是它自己。实测过一次：
+`UURemoteServer` 一个 0,0 1512x945 的全屏窗口把**卡片面板和活动监视器一起**盖住，
+而它从开机起就在那儿（跑了 6 天多）。所以"只有某一块拖不动"和"三块都拖不动"
+是两种完全不同的病：前者才值得怀疑代码，后者先去看是谁盖住了。
+
+遮挡排掉之后，再验派发链：`./build/tools/probe_drag` 用
+`[NSApplication postEvent:atStart:]` 把事件塞进本进程自己的队列（不碰系统事件流，
+所以**不需要辅助功能权限**），跑一遍 run loop 让 AppKit 走完
+NSApp → 窗口 → hitTest → 视图 的真实派发，看 `mouseDown/mouseDragged/mouseUp`
+三段是不是都送到了视图。局限：`NSEvent.mouseLocation` 取的是真实光标，
+"窗口到底位移了多少"测不了，只能测"事件到没到视图"。
+
 ## 环境要求
 
 - macOS 13.0+

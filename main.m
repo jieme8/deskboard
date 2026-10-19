@@ -1014,6 +1014,26 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     DeskLog(@"活动监视器摆到 %@（档位 dx/dy 保持不变）", [NSString stringWithUTF8String:names[corner & 3]]);
 }
 
+// 拖不动时的第二条出路：不靠鼠标，用菜单把组件每次挪 20pt。
+// 先搬窗口、再复用 saveMonitorPlaceInWindow: 落档 —— 存档是"角 + 距边距离"，
+// 自己再算一遍 dx/dy 的符号就是给同一个换算留第二套真相（那 60pt 漂移就是这么来的）。
+- (void)nudgeMonitor:(id)sender {
+    CGFloat dx = 0, dy = 0;
+    switch ([sender tag]) {
+        case 0: dx = -20; break;   // 左
+        case 1: dx =  20; break;   // 右
+        case 2: dy =  20; break;   // 上（Cocoa 的 y 朝上）
+        default: dy = -20; break;  // 下
+    }
+    for (NSWindow *w in _monitorWindows) {
+        NSRect f = w.frame;
+        [w setFrameOrigin:NSMakePoint(f.origin.x + dx, f.origin.y + dy)];
+        [self saveMonitorPlaceInWindow:w];
+    }
+    [self syncMenu];
+    DeskLog(@"活动监视器微调 (%+.0f,%+.0f)pt，不用按住拖也能挪", dx, dy);
+}
+
 - (NSMenu *)cornerMenuForTitle:(NSString *)title action:(SEL)action {
     NSMenu *m = [[NSMenu alloc] initWithTitle:title];
     static const char *names[4] = { "左上角", "右上角", "左下角", "右下角" };
@@ -1503,6 +1523,17 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
     [self addSubmenuTo:mon title:@"摆到（不用按住拖）"
                   menu:(_monitorCornerMenu = [self cornerMenuForTitle:@"摆到"
                                                               action:@selector(moveMonitorToCorner:)])];
+    {   // 摆到只能贴四个角，微调才能放到任意位置：拖不动时这条是完整出路
+        NSMenu *nudge = [[NSMenu alloc] initWithTitle:@"微调"];
+        static const char *nn[4] = { "左移 20pt", "右移 20pt", "上移 20pt", "下移 20pt" };
+        for (int i = 0; i < 4; i++) {
+            NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:[NSString stringWithUTF8String:nn[i]]
+                                                        action:@selector(nudgeMonitor:) keyEquivalent:@""];
+            it.tag = i;
+            [nudge addItem:it];
+        }
+        [self addSubmenuTo:mon title:@"微调 20pt（不用按住拖）" menu:nudge];
+    }
     [mon addItem:NSMenuItem.separatorItem];
     _monitorEditItem = DeskAddAction(mon, @"调角模式", self, @selector(toggleMonitorEditing:));
     DeskAddAction(mon, @"复位角点", self, @selector(resetMonitorQuad:));

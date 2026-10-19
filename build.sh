@@ -70,6 +70,9 @@ build_tools() {
         -o "$BUILD_DIR/tools/probe_scroll" tools/probe_scroll.m vault.m vault_art.m vault_view.m backdrop.m quad.m
   clang "${BASE[@]}" -framework AppKit -framework CoreImage -framework ImageIO -framework QuartzCore -framework SystemConfiguration -framework CoreWLAN -framework IOKit \
         -o "$BUILD_DIR/tools/preview_vault" tools/preview_vault.m vault.m vault_art.m vault_view.m backdrop.m quad.m
+  # 桌面层窗口的鼠标事件到底送不送到视图：postEvent 走本进程队列，不需要辅助功能权限
+  clang "${BASE[@]}" -framework AppKit -framework CoreGraphics -framework CoreImage -framework ImageIO -framework QuartzCore -framework IOKit \
+        -o "$BUILD_DIR/tools/probe_drag" tools/probe_drag.m history.m procs.m palette.m monitor_view.m vault.m vault_art.m vault_view.m backdrop.m quad.m
   # 活动监视器离屏出图 + 采集层冒烟测试：CLI 看不见桌面，这两件是唯一的肉眼替身
   clang "${BASE[@]}" -framework AppKit -framework CoreImage -framework ImageIO -framework QuartzCore -framework IOKit \
         -o "$BUILD_DIR/tools/preview_monitor" tools/preview_monitor.m history.m procs.m palette.m monitor_view.m vault.m vault_art.m vault_view.m backdrop.m quad.m

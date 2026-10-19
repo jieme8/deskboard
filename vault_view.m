@@ -1395,8 +1395,10 @@ static BOOL VaultEaseDone(double x, double target, double eps) {
 - (void)mouseDown:(NSEvent *)event {
     if (self.onLog) {
         NSPoint lp = [self convertPoint:event.locationInWindow fromView:nil];
-        self.onLog([NSString stringWithFormat:@"按下 局部(%.0f,%.0f) 窗口原点(%.0f,%.0f)",
-                    lp.x, lp.y, self.window.frame.origin.x, self.window.frame.origin.y]);
+        // 格式和监视器那条对齐：能拖的那块 vs 不能拖的那块，要能直接对表看
+        self.onLog([NSString stringWithFormat:@"按下 局部(%.0f,%.0f) 窗口原点(%.0f,%.0f) App激活=%d 本窗key=%d",
+                    lp.x, lp.y, self.window.frame.origin.x, self.window.frame.origin.y,
+                    [NSApp isActive], self.window.isKeyWindow]);
     }
     // 桌面层窗口默认不抢键盘，不接管双击和 ⌘W，所以这里不抢第一响应者
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];

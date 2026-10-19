@@ -928,8 +928,12 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     // 有这行 = 事件送到了视图，问题在算法；没这行 = 事件根本没到，问题在层序/吃点击的窗口。
     // 我这侧没有辅助功能权限，动不了真光标，只能靠这一行把两种情况分开。
     if (self.onLog) {
-        self.onLog([NSString stringWithFormat:@"按下：调角=%d 变形=%d 双击=%ld 窗原点(%.0f,%.0f)",
+        // App 活不活、这块窗口是不是 key，是"拖拽事件送不送得到"最可能的开关：
+        // 卡片/弹药库拖得动而监视器拖不动，静态属性已经全部比对过是一样的，
+        // 那就只剩"点它那一刻的状态"不同。这一行把那个状态也记下来。
+        self.onLog([NSString stringWithFormat:@"按下：调角=%d 变形=%d 双击=%ld App激活=%d 本窗key=%d 窗原点(%.0f,%.0f)",
                     _editing, self.isWarped, (long)event.clickCount,
+                    [NSApp isActive], w.isKeyWindow,
                     w.frame.origin.x, w.frame.origin.y]);
     }
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];

@@ -906,6 +906,40 @@ int main(int argc, const char *argv[]) {
                 @"第 0 行（偶数 pid）的 12h 平均值确实取到了");
             mv.historyForPid = nil;
         }
+
+        printf("\n活动监视器：12h 那根必须用现在这根的满刻度做分母（同一把尺）\n");
+        {
+            // 这条是淡条能对比的全部理由，之前一个断言都没有：把分母换成"这一列自己的最大值"，
+            // 画面上完全看不出来，但两根条子立刻不可比。用两个不变量钉住它。
+            NSMutableArray<DeskProc *> *rr = [NSMutableArray array];
+            for (int i2 = 0; i2 < 8; i2++) {
+                DeskProc *q = [DeskProc new];
+                q.pid = (pid_t)(8200 + i2); q.name = [NSString stringWithFormat:@"r%d", i2];
+                q.cpu = 20.0 - i2; q.mem = 3e8; q.energy = 9.0 - i2; q.wakeups = 2; q.sockets = 3;
+                [rr addObject:q];
+            }
+            __block double histScale = 1.0;      // 12h 平均 = 当前值 × histScale
+            mv.historyForPid = ^double(pid_t pid, DeskHistMetric hm, double *covered) {
+                if (covered) *covered = 12.0 * 3600.0;
+                for (DeskProc *q in rr) if (q.pid == pid) return [q cpu] * histScale;
+                return 0;
+            };
+            [mv updateRows:rr];
+            for (int k = 0; k < 120; k++) [mv tick:1.0 / 60.0];   // 让 _cellFrac 长到位
+            histScale = 1.0; [mv updateRows:rr];
+            for (int k = 0; k < 120; k++) [mv tick:1.0 / 60.0];
+            double a1 = [mv historyBarFractionAtMetric:DeskMonitorMetricCPU row:0];
+            double n1 = [mv nowBarFractionAtMetric:DeskMonitorMetricCPU row:0];
+            Say(fabs(a1 - n1) < 0.02 && n1 > 0.5,
+                @"12h 平均 == 当前值时两根一样长：12h %.3f vs 现在 %.3f", a1, n1);
+            histScale = 0.5; [mv updateRows:rr];
+            for (int k = 0; k < 120; k++) [mv tick:1.0 / 60.0];
+            double a2v = [mv historyBarFractionAtMetric:DeskMonitorMetricCPU row:0];
+            double n2v = [mv nowBarFractionAtMetric:DeskMonitorMetricCPU row:0];
+            Say(fabs(a2v - n2v * 0.5) < 0.02,
+                @"12h 平均是当前值一半时，淡条也正好是亮条一半：%.3f vs %.3f", a2v, n2v * 0.5);
+            mv.historyForPid = nil;
+        }
         {
             // 表头那串图例是后加的，它和右端时间戳之间必须留够缝 —— 进程数从 3 位涨到 4 位、
             // 或图例再长一点，就会无声地撞上。这里按最坏情况（4 位进程数）量一次。

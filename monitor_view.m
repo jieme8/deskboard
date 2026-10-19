@@ -593,12 +593,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         [MonMetricColor(m) setFill];
         [fp fill];
     }
-    // 12h 条按"同一把尺"画：分母用现在这条的满刻度换算，两根条子才可直接比长短
-    double histFrac = 0.0;
-    if (_cellCov[m][r] > 0 && _cellFrac[m][r] > 0.001) {
-        double live = [self valueTextScaleForMetric:m row:r];
-        if (live > 0) histFrac = MAX(0.0, MIN(1.0, _cellAvg[m][r] / live));
-    }
+    double histFrac = [self historyBarFractionAtMetric:m row:r];
     if (histFrac > 0.0) {
         NSRect knob = NSMakeRect(NSMinX(bar), NSMinY(bar),
                                  MAX(3.0, round(NSWidth(bar) * histFrac)), kBarH);
@@ -639,6 +634,20 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 // 这一格该不该画 12h 那根的槽。规矩只有一句：没有记录就没有槽 ——
 // 空槽读起来是"12 小时平均 = 0"，而真相是"还不知道"（和"191 没单位"同一类毛病）。
 // 单独开成方法是为了让 verify.m 能断言它，不然这条只能靠肉眼守。
+// 两根条子能对比，全靠"12h 那根用现在这根的满刻度做分母"这一条。它是整个淡条设计的
+// 全部理由，之前却没有任何断言守着 —— 谁把分母换成"这一列自己的最大值"，两根条子就
+// 立刻不可比，而画面上完全看不出来。开成方法就是为了能被断言。
+- (double)historyBarFractionAtMetric:(NSInteger)m row:(NSInteger)r {
+    if (m < 0 || m > 3 || r < 0 || r >= kMonitorRowsPerQuadrant) return 0;
+    if (_cellCov[m][r] <= 0 || _cellFrac[m][r] <= 0.001) return 0;
+    double live = [self valueTextScaleForMetric:m row:r];
+    if (live <= 0) return 0;
+    return MAX(0.0, MIN(1.0, _cellAvg[m][r] / live));
+}
+- (double)nowBarFractionAtMetric:(NSInteger)m row:(NSInteger)r {
+    if (m < 0 || m > 3 || r < 0 || r >= kMonitorRowsPerQuadrant) return 0;
+    return MAX(0.0, MIN(1.0, _cellFrac[m][r]));
+}
 - (BOOL)showsHistoryTrackAtMetric:(NSInteger)m row:(NSInteger)r {
     if (m < 0 || m > 3 || r < 0 || r >= kMonitorRowsPerQuadrant) return NO;
     return _cellCov[m][r] > 0;

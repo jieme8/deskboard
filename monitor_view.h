@@ -64,6 +64,8 @@ typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
 - (BOOL)isDragging;
 // 悬停浮层要显示精确的 12h 数字和"已记录多久"，这两个口就是给它用的
 - (double)historyAverageAtMetric:(NSInteger)m row:(NSInteger)r;
+- (double)historyBarFractionAtMetric:(NSInteger)m row:(NSInteger)r;
+- (double)nowBarFractionAtMetric:(NSInteger)m row:(NSInteger)r;
 - (BOOL)showsHistoryTrackAtMetric:(NSInteger)m row:(NSInteger)r;
 - (double)historyCoveredAtMetric:(NSInteger)m row:(NSInteger)r;
 // 只给校验用：榜头那串读数。两条不变量（总≥任意一行、能耗榜头是比例不是自造单位绝对值）

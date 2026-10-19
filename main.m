@@ -1044,6 +1044,10 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
         [w setFrameOrigin:NSMakePoint(f.origin.x + dx, f.origin.y + dy)];
         [self saveMonitorPlaceInWindow:w];
     }
+    // 必须再按存档重申一遍：saveMonitorPlaceInWindow: 会把 dx/dy 夹在 [16, 屏宽-卡宽-16] 里，
+    // 一直往同一个方向推就会推到夹界外 —— 窗口实际位置已经越界、存档却记成 16，
+    // 两者不一致，下次重启会凭空跳一段。重申之后"窗口 == 存档"恒成立，推到边就干净停住。
+    [self applyMonitorFrames];
     [self syncMenu];
     DeskLog(@"活动监视器微调 (%+.0f,%+.0f)pt，不用按住拖也能挪", dx, dy);
 }

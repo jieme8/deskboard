@@ -842,15 +842,18 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     v.onLog = ^(NSString *message) { DeskLog(@"活动监视器 %@", message); };
     // 组件自己说"我要动了"就把动画表叫回来：空闲时那张表是停着的
     v.onNeedFrames = ^{ [weakSelf resumeWidgetTicking]; };
-    v.onHover = ^(pid_t pid, NSRect row) { [weakSelf showMonitorHover:pid rowInWindow:row
-                                                            forWindow:weakW]; };
+    v.onHover = ^(pid_t pid, NSRect row, NSInteger metric, double avg, double covered) {
+        [weakSelf showMonitorHover:pid rowInWindow:row metric:metric
+                            histAvg:avg histCovered:covered forWindow:weakW];
+    };
     w.contentView = v;
     return w;
 }
 
 // 浮层放在被悬停那一行的右侧；右边放不下就放左边。层级和组件同层，
 // 所以它永远盖不住用户的应用窗口，只是比卡片先画而已
-- (void)showMonitorHover:(pid_t)pid rowInWindow:(NSRect)row forWindow:(NSWindow *)host {
+- (void)showMonitorHover:(pid_t)pid rowInWindow:(NSRect)row metric:(NSInteger)metric
+                    histAvg:(double)histAvg histCovered:(double)histCovered forWindow:(NSWindow *)host {
     if (pid <= 0 || !host) { [_monitorHoverWindow orderOut:nil]; return; }
     DeskProc *p = [_procs procWithPid:pid];
     if (!p) { [_monitorHoverWindow orderOut:nil]; return; }
@@ -876,6 +879,7 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     hv.uid = [self uidOfPid:p.pid];
     hv.startedAt = p.startedAt;
     hv.cpu = p.cpu; hv.mem = p.mem; hv.energy = p.energy; hv.sockets = p.sockets;
+    hv.histMetric = metric; hv.histAvg = histAvg; hv.histCovered = histCovered;
     _monitorHoverWindow.contentView = hv;
 
     NSRect hf = host.frame;

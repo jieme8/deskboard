@@ -37,8 +37,11 @@ typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
 // 关键约束：这个块只在**数据换拍**时被调用一次，绝不能在 drawRect 里现问 ——
 // 一次窗口求和要遍历 720 个桶，16 行乘上 60fps 就是白白把 CPU 送掉。
 @property (nonatomic, copy, nullable) double (^historyForPid)(pid_t pid, DeskHistMetric m, double *covered);
-//// 悬停某个进程：main.m 据此开/收卡外浮层。pid < 0 = 移开
-@property (nonatomic, copy) void (^onHover)(pid_t pid, NSRect rowInWindow);
+//// 悬停某个进程：main.m 据此开/收卡外浮层。pid < 0 = 移开。
+// 连着那一格的 12 小时平均值和"窗口内真正记录到的秒数"一起给出去 —— 浮层要显示精确数字，
+// 而只有视图缓存着它（换拍算一次），别让 main.m 再回头问视图要格号。
+@property (nonatomic, copy) void (^onHover)(pid_t pid, NSRect rowInWindow, NSInteger metric,
+                                            double histAvg, double histCovered);
 
 // 塞假数据给预览/校验工具用，不碰真实系统
 - (instancetype)initWithRows:(NSArray<DeskProc *> *)rows;
@@ -96,6 +99,10 @@ typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
 @property (nonatomic, assign) double mem;
 @property (nonatomic, assign) double energy;
 @property (nonatomic, assign) NSInteger sockets;
+// 悬停那一格的 12 小时平均（同一指标）与窗口内真正记录到的秒数
+@property (nonatomic, assign) double histAvg;
+@property (nonatomic, assign) double histCovered;
+@property (nonatomic, assign) NSInteger histMetric;
 @end
 
 NS_ASSUME_NONNULL_END

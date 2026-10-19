@@ -89,6 +89,20 @@ int main(int argc, const char *argv[]) {
         for (int k = 0; k < 60; k++) [empty tick:1.0 / 60.0];
         WritePNG(Render(empty, scale), [out stringByAppendingPathComponent:@"5-empty.png"]);
         printf("  写了 5-empty.png\n");
+        // 悬停详情浮层单独出一张：它就是"第二根线到底是多少"的答案所在
+        DeskMonitorHoverView *hv = [[DeskMonitorHoverView alloc] initWithFrame:NSMakeRect(0, 0, 214, 150)];
+        hv.procName = @"UURemoteServer"; hv.pid = 4100; hv.uid = 501; hv.startedAt = 0;
+        hv.cpu = 20.2; hv.mem = 486e6; hv.energy = 26.7; hv.sockets = 5;
+        hv.histMetric = DeskMonitorMetricCPU; hv.histAvg = 3.14; hv.histCovered = 12.0 * 3600.0;
+        NSImage *himg = [NSImage imageWithSize:NSMakeSize(214 * scale, 150 * scale) flipped:YES
+                              drawingHandler:^BOOL(NSRect r) {
+            [[NSColor colorWithSRGBRed:0.02 green:0.07 blue:0.14 alpha:1] setFill];
+            NSRectFillUsingOperation(r, NSCompositingOperationSourceOver);
+            [hv drawRect:hv.bounds];
+            return YES;
+        }];
+        WritePNG(himg, [out stringByAppendingPathComponent:@"6-hover.png"]);
+        printf("  写了 6-hover.png\n");
         return 0;
     }
 }

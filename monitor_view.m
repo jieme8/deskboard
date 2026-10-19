@@ -849,7 +849,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 }
 - (void)mouseExited:(NSEvent *)event {
     if (_hoverRow >= 0) { _hoverMetric = _hoverRow = -1; _hover = NSZeroRect;
-        if (self.onHover) self.onHover(-1, NSZeroRect);
+        if (self.onHover) self.onHover(-1, NSZeroRect, -1, 0, 0);
         [self setNeedsDisplay:YES]; }
 }
 
@@ -862,7 +862,8 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     _hover = row < 0 ? NSZeroRect : [self rowRectAtMetric:metric row:row in:self.bounds];
     if (self.onHover) {
         pid_t pid = row < 0 ? -1 : [self pidAtMetric:metric row:row];
-        self.onHover(pid, row < 0 ? NSZeroRect : [self convertRect:_hover toView:nil]);
+        self.onHover(pid, row < 0 ? NSZeroRect : [self convertRect:_hover toView:nil],
+                     metric, row < 0 ? 0 : _cellAvg[metric][row], row < 0 ? 0 : _cellCov[metric][row]);
     }
     [self setNeedsDisplay:YES];
 }
@@ -961,6 +962,20 @@ static NSString *MonUptime(long long startedAt) {
 
 - (BOOL)isFlipped { return YES; }
 
+// 12h 读数必须和这一行的即时值同一单位，否则并排放着还是看不懂
+static NSString *MonHistText(NSInteger metric, double avg, double covered) {
+    if (covered <= 0) return nil;
+    switch (metric) {
+        case DeskMonitorMetricCPU: return [NSString stringWithFormat:@"12h %.1f%%", avg];
+        case DeskMonitorMetricMemory:
+            return avg >= 1e9 ? [NSString stringWithFormat:@"12h %.1fG", avg / 1e9]
+                              : [NSString stringWithFormat:@"12h %.0fM", avg / 1048576.0];
+        case DeskMonitorMetricEnergy: return [NSString stringWithFormat:@"12h %.1f", avg];
+        case DeskMonitorMetricNetwork: return [NSString stringWithFormat:@"12h %.0f 个", avg];
+        default: return nil;
+    }
+}
+
 - (void)drawRect:(NSRect)dirtyRect {
     NSRect b = self.bounds;
     NSBezierPath *bg = [NSBezierPath bezierPathWithRoundedRect:b xRadius:11.0 yRadius:11.0];
@@ -995,6 +1010,17 @@ static NSString *MonUptime(long long startedAt) {
         MonStr(lines[i].label, NSMakePoint(x + 12, y), _labelFont, MC(255, 255, 255, 0.62), NO);
         MonStr(lines[i].text, NSMakePoint(NSMaxX(b) - 10 - MonWidth(lines[i].text, _valueFont), y - 1),
                _valueFont, MonBubbleInk(), NO);
+        // 榜内那根淡条没有数字可读，精确值放这里 —— 用户报的就是"第二根线看不懂"。
+        // 但只有**被悬停那一榜**有 12h 值：视图缓存的是"这一榜这一行"的格子，一个进程
+        // 通常只出现在一榜里，拿同一个数去标另外三行就是假数据（实测错过一次：
+        // histAvg=3.14 被内存行显示成 "12h 0M"、网络行显示成 "12h 3 个"）。
+        NSString *hist = lines[i].metric == _histMetric
+            ? MonHistText(lines[i].metric, _histAvg, _histCovered) : nil;
+        if (hist.length) {
+            CGFloat hx = NSMaxX(b) - 10 - MonWidth(lines[i].text, _valueFont) - 8
+                         - MonWidth(hist, _metaFont);
+            MonStr(hist, NSMakePoint(hx, y), _metaFont, MC(255, 255, 255, 0.45), NO);
+        }
         y += 12.0;
     }
     y += 6.0;
@@ -1005,8 +1031,11 @@ static NSString *MonUptime(long long startedAt) {
     [MC(255, 255, 255, 0.10) setStroke];
     [sep stroke];
     y += 6.0;
-    MonStr(@"双击组件 → 打开原生活动监视器", NSMakePoint(x, y), MonText(9.0),
-           MC(255, 255, 255, 0.55), NO);
+    NSString *foot = _histCovered > 0 && _histCovered < kDeskHistoryWindow * 0.98
+        ? [NSString stringWithFormat:@"12h 平均基于已记录的 %.1f 小时 · 双击看原生活动监视器",
+                                      _histCovered / 3600.0]
+        : @"12h 平均 = 过去 12 小时 · 双击看原生活动监视器";
+    MonStr(foot, NSMakePoint(x, y), MonText(9.0), MC(255, 255, 255, 0.55), NO);
 }
 
 @end

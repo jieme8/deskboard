@@ -212,6 +212,7 @@ static const CGFloat kVaultCoverShare = 0.25;
     NSInteger _monitorStyle;
     NSMenu *_monitorStyleMenu;
     NSMenu *_monitorCornerMenu;
+    NSString *_screenSig;         // 上一次见过的屏幕配置指纹（屏数 + 每屏 displayID/点尺寸/原点）
     NSMenuItem *_monitorItem;
     DeskQuadOffsets _monitorQuad;   // 活动监视器自己的四角位移，三块组件各调各的
     BOOL _monitorEditing;
@@ -318,7 +319,8 @@ static const CGFloat kVaultCoverShare = 0.25;
                                              selector:@selector(screenDidChange:)
                                                  name:NSApplicationDidChangeScreenParametersNotification
                                                object:nil];
-    DeskLog(@"启动完成 屏位档 %lu 隐藏=%d", (unsigned long)_places.count, _hidden);
+    _screenSig = [self currentScreenSignature];   // 建完窗再记指纹：之后每条"抖动"通知都能认出配置没变
+    DeskLog(@"启动完成 屏位档 %lu 隐藏=%d 屏幕指纹=%@", (unsigned long)_places.count, _hidden, _screenSig);
 }
 
 - (NSString *)dataDir {
@@ -1356,11 +1358,38 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     [self updateHud];
 }
 
+// 屏幕配置指纹：屏数 + 每屏的 displayID / 点尺寸 / 原点。用来判断"这次通知到底是不是真变了"。
+- (NSString *)currentScreenSignature {
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    for (NSScreen *s in [NSScreen screens]) {
+        NSNumber *idNum = s.deviceDescription[@"NSScreenNumber"];
+        NSRect f = s.frame;
+        [parts addObject:[NSString stringWithFormat:@"%@-%.0fx%.0f+%.0f+%.0f",
+                          idNum ?: @"?", f.size.width, f.size.height, f.origin.x, f.origin.y]];
+    }
+    [parts sortUsingSelector:@selector(compare:)];
+    return [parts componentsJoinedByString:@"|"];
+}
+
 // 屏幕参数变更期间（切分辨率、接拔显示器）系统会先平移现有窗口再发通知，
-// 而且迁移可能滞后于我们建窗。所以：冻结存档 3 秒 + 稍后按存档把窗口重申两遍，
-// 压住迟到的系统迁移
+// 而且迁移可能滞后于我们建窗。所以：稍后按存档把窗口重申两遍，压住迟到的系统迁移。
+//
+// **但绝不能对每条通知都重建窗口。** 这台机器的显示配置每 8~20 秒就抖一次
+// （日志实测 12:43:18 / :32 / :39 / :47 / :57 连续五次），而旧写法每次都把三块组件的
+// 窗口销毁重建 —— 用户按住活动监视器拖到一半，那个视图就被换掉了，`mouseDragged:` 永远
+// 送不到，这正是"mouseDown 到得了（10:55 双击那条）但整份历史没有一条拖拽日志"的成因。
+// 重建还会让活动监视器每次空板几秒（榜要等下一拍才有数据）。
+// 现在只有指纹真的变了才重建；否则只重申位置。
 - (void)screenDidChange:(NSNotification *)note {
-    DeskLog(@"屏幕参数变更，按存档重申位置");
+    NSString *sig = [self currentScreenSignature];
+    if (_screenSig && [sig isEqualToString:_screenSig]) {
+        DeskLog(@"屏幕参数变更（配置指纹没变，只重申位置，不重建窗口）");
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{ [self reassertFrames]; });
+        return;
+    }
+    _screenSig = sig;
+    DeskLog(@"屏幕配置真的变了：%@ —— 重建三块组件的窗口", sig);
     [self rebuildWindows];
     [self rebuildVaultWindows];
     // 第三块组件也必须跟着重建：屏幕参数一变，存档里的档位可能整体落空（窗口留在旧屏幕上），

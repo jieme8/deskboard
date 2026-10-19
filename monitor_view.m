@@ -854,8 +854,8 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 // （用户已确认这个取舍）—— 恢复成正的，悬停和双击看原生活动监视器都回来。
 // 返回值 = 这一帧归不归调角。没命中角点也没命中复位按钮就交回窗口拖动，和卡片面板
 // panel_view.m:334、弹药库 vault_view.m:1415 是同一套写法。原来这里在 _editing 下无条件
-// return，一进调角模式整块组件就拖不动了 —— 用户报"活动监视器没法拖拉"，而同样开着调角
-// 的卡片和弹药库一直拖得动，差别就在这句。
+// return，一进调角模式整块组件就拖不动 —— 这是个真 bug，但**不是用户报"拖不动"的已证原因**：
+// 日志里从来没有一条活动监视器的调角开关，他没进过这个模式。别把它写成"已找到根因"。
 - (BOOL)trackCornerDrag:(NSEvent *)event {
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
     if (NSPointInRect(p, [self resetButtonRect])) {

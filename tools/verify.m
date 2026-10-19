@@ -1017,9 +1017,10 @@ int main(int argc, const char *argv[]) {
                 @"松手后 mouseDragged 不再挪窗（只有按住才拖）");
             [dv mouseUp:up];
             Say(moved == 1, @"没有按下就没有松手事件 —— 不会被误记成用户移动过");
-            // 真凶落网那条：调角模式里 mouseDown 原来无条件 return，整块组件一点都拖不动，
-            // 而同样开着调角的卡片面板、弹药库一直拖得动 —— 用户说的"活动监视器没法拖拉"
-            // 就是这个模式陷阱，不是遮挡（probe_clickcatcher 量到三块组件被同一批窗口压着）。
+            // 模式陷阱：调角模式里 mouseDown 原来无条件 return，整块组件一点都拖不动，
+            // 而同样开着调角的卡片面板、弹药库一直拖得动。**注意这不是用户那次的已证原因**
+            // —— 日志里从来没有一条活动监视器的调角开关，他没进过这个模式。遮挡那条也已用
+            // A/B 证伪（tools/probe_clickcatcher.m 量到三块组件被同一批窗口压着）。
             {
                 NSPoint midWin = [dv convertPoint:NSMakePoint(kMonitorViewWidth * 0.5,
                                                               kMonitorViewHeight * 0.5) toView:nil];

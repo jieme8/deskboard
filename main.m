@@ -832,6 +832,9 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     __weak typeof(self) weakSelf = self;
     __weak NSWindow *weakW = w;
     v.onUserMove = ^{ [weakSelf saveMonitorPlaceInWindow:weakW]; };
+    // 弹药库和卡片都有这一句，活动监视器漏了：拖角时窗口要按新的四角包围盒重新撑位，
+    // 不接就等于"角拖出去了、画布没跟着长"，四角会被窗口裁掉。
+    v.onGeometryChange = ^{ [weakSelf applyMonitorFrames]; };
     // 视图不碰 DeskHistory（保持"只画不采"），只拿一个取数口；而且只在换拍时问一次
     v.historyForPid = ^double(pid_t pid, DeskHistMetric m, double *covered) {
         // 直接捕获 _hist：它不反向引用 self，所以不会成环；用 weakSelf 反而要为此开个属性

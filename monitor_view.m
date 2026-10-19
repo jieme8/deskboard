@@ -99,6 +99,8 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     NSRect _hover;                  // 空矩形 = 没悬停
     NSInteger _hoverMetric, _hoverRow;
     BOOL _dragging;
+    NSPoint _dragStartMouse;      // 按下时鼠标的屏幕坐标
+    NSRect _frameAtDragStart;     // 按下时窗口的位置
     NSRect _standInScreenRect;
     NSImage *_wallpaper;
     NSRect _wallpaperRect;
@@ -429,7 +431,10 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     NSString *title = @"活动监视器";
     MonStr(title, NSMakePoint(kPadX, y), titleFont, _pal.title, shadow);
     CGFloat x = kPadX + MonWidth(title, titleFont) + 9.0;
-    NSString *cnt = [NSString stringWithFormat:@"你的进程 %ld 个", (long)_procCount];
+    // 第二根条子必须在这里说明白 —— 用户反馈"看不懂那根线是什么意思"，而版面里之前
+    // 没有任何地方交代过它。图例挂在表头这句后面，不额外占一行，也不动四榜的格子。
+    NSString *cnt = [NSString stringWithFormat:@"你的进程 %ld 个 · 亮条=现在 淡条=12小时平均",
+                     (long)_procCount];
     MonStr(cnt, NSMakePoint(x, y + 2), MonText(10.0), _pal.label, shadow);
     NSString *stamp = [NSString stringWithFormat:@"%@ 采样", MonClock() ?: @"--:--"];
     MonStr(stamp, NSMakePoint(NSMaxX(b) - kPadX - MonWidth(stamp, MonNum(10.0, NSFontWeightRegular)), y + 2),
@@ -843,12 +848,9 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 - (void)mouseDown:(NSEvent *)event {
     NSWindow *w = self.window;
     if (!w) return;
+    NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
     if (_editing) { [self trackCornerDrag:event]; return; }
-    NSPoint startInWindow = event.locationInWindow;
-    NSRect frameAtStart = w.frame;
-    NSPoint mouseAtStart = NSEvent.mouseLocation;
     NSInteger metric = -1;
-    NSPoint p = [self convertPoint:startInWindow fromView:nil];
     NSInteger row = [self hitTestRowAt:p in:self.bounds metric:&metric];
     if (row >= 0 && event.clickCount >= 2 && !self.isWarped) {
         // 双击 = 在原生活动监视器里看这个进程。组件只做入口，不重造一个 AM
@@ -857,26 +859,33 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         NSURL *am = [NSURL fileURLWithPath:@"/System/Applications/Utilities/Activity Monitor.app"];
         [ws openURLs:@[am] withApplicationAtURL:am
              configuration:[NSWorkspaceOpenConfiguration configuration]
-       completionHandler:^(NSRunningApplication *app, NSError *err) {
-            if (err) return;
-            (void)pid;
-        }];
+       completionHandler:^(NSRunningApplication *app, NSError *err) { if (err) return; (void)pid; }];
         if (self.onLog) self.onLog([NSString stringWithFormat:@"打开活动监视器看 pid %d", (int)pid]);
         return;
     }
+    // 只记下起点，真正挪窗口交给 mouseDragged:。
+    // 原来这里是在 mouseDown 里自己开一个 nextEventMatchingMask 模态循环 —— 无边框、
+    // 非 key、宿主又是 LSUIElement 从不激活的窗口根本收不到那条队列里的拖拽事件，
+    // 循环只能干等到 8 秒超时，用户看到的就是"拖不动"。卡片面板和弹药库都是
+    // mouseDown/mouseDragged/mouseUp 三段式，跟着它们走才对。
     _dragging = YES;
-    while (YES) {
-        NSEvent *e = [w nextEventMatchingMask:(NSEventMaskLeftMouseUp | NSEventMaskLeftMouseDragged)
-                                    untilDate:[NSDate dateWithTimeIntervalSinceNow:8.0]
-                                       inMode:NSEventTrackingRunLoopMode dequeue:YES];
-        if (!e) break;
-        if (e.type == NSEventTypeLeftMouseDragged) {
-            NSRect f = VaultDragFrame(frameAtStart, mouseAtStart, NSEvent.mouseLocation);
-            [w setFrame:f display:YES animate:NO];
-        } else break;
-    }
+    _dragStartMouse = NSEvent.mouseLocation;
+    _frameAtDragStart = w.frame;
+    [self setNeedsDisplay:YES];
+}
+
+- (void)mouseDragged:(NSEvent *)event {
+    if (!_dragging) return;
+    NSWindow *w = self.window;
+    if (!w) return;
+    [w setFrame:VaultDragFrame(_frameAtDragStart, _dragStartMouse, NSEvent.mouseLocation)
+        display:YES animate:NO];
+}
+
+- (void)mouseUp:(NSEvent *)event {
+    if (!_dragging) return;
     _dragging = NO;
-    if (self.onUserMove) self.onUserMove();
+    if (self.onUserMove) self.onUserMove();   // 只有这条路径是"用户亲手拖过"
     [self setNeedsDisplay:YES];
 }
 

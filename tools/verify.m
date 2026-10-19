@@ -813,6 +813,21 @@ int main(int argc, const char *argv[]) {
             }
         }
         Say(!barBad, @"16 行的指标条都是行底 2pt 整行宽细条，且不压文字（照抄卡片面板）");
+        {
+            // 表头那串图例是后加的，它和右端时间戳之间必须留够缝 —— 进程数从 3 位涨到 4 位、
+            // 或图例再长一点，就会无声地撞上。这里按最坏情况（4 位进程数）量一次。
+            NSFont *tf = [NSFont systemFontOfSize:12.5 weight:NSFontWeightSemibold];
+            NSFont *cf = [NSFont systemFontOfSize:10.0 weight:NSFontWeightMedium];
+            NSFont *sf = [NSFont monospacedDigitSystemFontOfSize:10.0 weight:NSFontWeightRegular];
+            CGFloat w1 = [@"活动监视器" sizeWithAttributes:@{NSFontAttributeName: tf}].width;
+            NSString *cnt = @"你的进程 1000 个 · 亮条=现在 淡条=12小时平均";
+            CGFloat w2 = [cnt sizeWithAttributes:@{NSFontAttributeName: cf}].width;
+            CGFloat w3 = [@"09:07 采样" sizeWithAttributes:@{NSFontAttributeName: sf}].width;
+            CGFloat used = 14.0 + w1 + 9.0 + w2;
+            CGFloat stampX = kMonitorViewWidth - 14.0 - w3;
+            Say(used + 10.0 <= stampX, @"表头图例与时间戳不撞：图例右端 %.1f ≤ 时间戳左端 %.1f（最坏 4 位进程数）",
+                used, stampX);
+        }
         // 取色必须和卡片面板共用同一份 DeskPaletteFor，并且跟着系统外观翻：
         // 以前监视器自己抄了一份深色档，用户哪天切 Light 就会出现「卡片深字、监视器还白字」
         void (^chk)(NSColor *, NSColor *, NSString *) = ^(NSColor *x, NSColor *y, NSString *why) {
@@ -887,6 +902,41 @@ int main(int argc, const char *argv[]) {
         Say(mv.isWarped, @"角点归零但调角模式还开着 —— 仍在变形态，把手才画得出来");
         mv.editing = NO;
         Say(!mv.isWarped, @"退出调角且角点为零：回到实时绘制");
+        // 拖不动的根因：原来 mouseDown: 里自己开了个 nextEventMatchingMask 模态循环，
+        // 无边框非 key 的桌面层窗口收不到那条队列的拖拽事件，只能干等 8 秒超时。
+        // 所以这里最硬的一条断言是"mouseDown 立刻返回" —— 旧代码会卡满 8 秒。
+        {
+            NSWindow *dw = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, kMonitorViewWidth, kMonitorViewHeight)
+                                                      styleMask:NSWindowStyleMaskBorderless
+                                                        backing:NSBackingStoreBuffered defer:NO];
+            DeskMonitorView *dv = [[DeskMonitorView alloc] initWithRows:@[]];
+            dw.contentView = dv;
+            NSEvent *down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown
+                                               location:NSMakePoint(200, 140)
+                                          modifierFlags:0 timestamp:[NSDate date].timeIntervalSince1970
+                                               windowNumber:dw.windowNumber context:nil
+                                                  eventNumber:1 clickCount:1 pressure:1.0];
+            NSTimeInterval t0 = [NSDate date].timeIntervalSince1970;
+            [dv mouseDown:down];
+            NSTimeInterval spent = [NSDate date].timeIntervalSince1970 - t0;
+            Say(spent < 0.5, @"mouseDown 立刻返回（%.3fs，旧代码要卡满 8s 模态循环）", spent);
+            Say([dv isDragging], @"按下后进入拖窗态");
+            __block int moved = 0;
+            dv.onUserMove = ^{ moved++; };
+            NSEvent *up = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp
+                                             location:NSMakePoint(200, 140)
+                                        modifierFlags:0 timestamp:[NSDate date].timeIntervalSince1970
+                                             windowNumber:dw.windowNumber context:nil
+                                            eventNumber:2 clickCount:1 pressure:0.0];
+            [dv mouseUp:up];
+            Say(![dv isDragging] && moved == 1, @"松手退出拖窗态，并且只报一次「用户亲手拖过」");
+            [dv mouseUp:up];
+            Say(moved == 1, @"没有按下就没有松手事件 —— 不会被误记成用户移动过");
+            // 不 close：这个 CLI 里没有跑起来的 NSApp，关窗口会走到没有事件环境的销毁路径
+            [dv mouseDown:down]; [dv mouseUp:up];
+            [dw orderOut:nil];
+            dw = nil; dv = nil;
+        }
         printf("\n12 小时历史桶：口径、剪枝与落盘\n");
         NSTimeInterval T = [NSDate date].timeIntervalSince1970;
         NSString *hp = [NSTemporaryDirectory() stringByAppendingPathComponent:

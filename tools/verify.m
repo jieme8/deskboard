@@ -814,6 +814,33 @@ int main(int argc, const char *argv[]) {
         }
         Say(!barBad, @"16 行的指标条都是行底 2pt 整行宽细条，且不压文字（照抄卡片面板）");
         {
+            // 用户原话："uu 显示 20.2 但总 cpu 显示 11.1，总数还没单个进程大"。
+            // 根因是两套分母：sysmon 的 s.cpu 除以 total（整机 %），procs 的 p.cpu 除以 wall
+            // （单核 %）。现在把榜头换算到同一把尺，这条断言钉住"总 ≥ 任意一行"由构造成立。
+            NSMutableArray<DeskProc *> *sc = [NSMutableArray array];
+            for (int i = 0; i < 8; i++) {
+                DeskProc *p = [DeskProc new];
+                p.pid = (pid_t)(5000 + i); p.name = [NSString stringWithFormat:@"s%d", i];
+                p.cpu = 20.2 - i; p.mem = 2e8; p.energy = 30.0 - i * 2; p.wakeups = 5; p.sockets = 3;
+                [sc addObject:p];
+            }
+            mv.totalCPU = 11.1;                       // 整机口径，和卡片面板同一个数
+            [mv updateRows:sc];
+            NSString *agg = [mv aggregateTextForMetric:DeskMonitorMetricCPU];
+            double aggV = [agg doubleValue];          // "133%" 这种串 doubleValue 会取前导数字
+            Say(aggV >= 20.2, @"榜头「%@」≥ 榜内最大行的 20.2 —— 换算成单核百分点后总不小于部分", agg);
+            Say(aggV > 11.1 * 8, @"榜头确实按核数放大了（11.1%% 整机 → %@）", agg);
+            // 能耗榜头不能再是自造单位的绝对和
+            NSString *ea = [mv aggregateTextForMetric:DeskMonitorMetricEnergy];
+            Say([ea hasPrefix:@"前4占"], @"能耗榜头改成比例读数：「%@」，不再印 191 那种没单位的数", ea);
+            // "前4占 59%"：前 4 个 UTF-16 单元是「前」「4」「占」「空格」，跳过它们再取数
+            double pct = [[ea substringFromIndex:4] doubleValue];
+            double total = 0; for (DeskProc *p in sc) total += p.energy;
+            double top4 = 0; for (int i = 0; i < 4; i++) top4 += sc[i].energy;
+            Say(fabs(pct - top4 / total * 100.0) <= 1.0,
+                @"前4占 %.0f%% 与独立算出的 %.1f%% 对得上", pct, top4 / total * 100.0);
+        }
+        {
             // 表头那串图例是后加的，它和右端时间戳之间必须留够缝 —— 进程数从 3 位涨到 4 位、
             // 或图例再长一点，就会无声地撞上。这里按最坏情况（4 位进程数）量一次。
             NSFont *tf = [NSFont systemFontOfSize:12.5 weight:NSFontWeightSemibold];

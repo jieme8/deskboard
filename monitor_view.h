@@ -62,6 +62,9 @@ typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
 // 悬停浮层要显示精确的 12h 数字和"已记录多久"，这两个口就是给它用的
 - (double)historyAverageAtMetric:(NSInteger)m row:(NSInteger)r;
 - (double)historyCoveredAtMetric:(NSInteger)m row:(NSInteger)r;
+// 只给校验用：榜头那串读数。两条不变量（总≥任意一行、能耗榜头是比例不是自造单位绝对值）
+// 全靠它断言，不然改口径没人拦得住。
+- (NSString *)aggregateTextForMetric:(NSInteger)m;
 
 #pragma mark - 调角模式（和卡片面板 / 弹药库同一条路）
 // 变形时整张组件先画成正的、烘成位图，再按四角投影；没变形时走实时绘制，文字才是原生清晰度。

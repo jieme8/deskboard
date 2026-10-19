@@ -21,6 +21,17 @@ static const CGFloat kBarH = 2.0;
 static const CGFloat kValueW = 34.0;
 static const CGFloat kGridTop = 48.0;          // 顶栏 + 分隔线 + 间距之后的第一格上沿
 
+// 逻辑核数。榜头的 CPU 要换算成"全部核加起来"的口径，才能和每行同尺（见 aggregateFor:）
+static NSInteger MonCoreCount(void) {
+    static NSInteger cores;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        cores = (NSInteger)[NSProcessInfo.processInfo activeProcessorCount];
+        if (cores < 1) cores = 1;
+    });
+    return cores;
+}
+
 #define MC(r, g, b, a) [NSColor colorWithSRGBRed:(r) / 255.0 green:(g) / 255.0 blue:(b) / 255.0 alpha:(a)]
 
 // 悬停浮层自带一块固定深底（MC(4,18,36,.86)），底色不随系统外观翻，
@@ -36,7 +47,7 @@ static NSColor *MonMetricColor(NSInteger m) {
 }
 static NSString *MonMetricLabel(NSInteger m) {
     switch (m) {
-        case DeskMonitorMetricCPU: return @"CPU";
+        case DeskMonitorMetricCPU: return @"CPU 全核";   // 标"全核"：每行也是单核百分点，同尺才可比
         case DeskMonitorMetricMemory: return @"内存";
         case DeskMonitorMetricEnergy: return @"能耗（估）";
         // 榜头是系统总速率，榜内每行是"活跃 socket 数"——每进程字节数这条路暂时接不了
@@ -110,6 +121,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     NSString *_cellName[4][4];    // 截断在数据变更时算一次，绘制路径只贴字
     double _cellAvg[4][4];          // 12h 平均：同样只在换拍时算一次，绘制路径只读
     double _cellCov[4][4];          // 这一格里窗口内真正记录到的秒数（数据完不完整靠它）
+    double _topShare;               // 能耗榜前四名占全部进程能耗的比例（0~1），换拍算一次
     // 调角模式：变形时整张组件先画成正的、烘成位图，再按四角投影（和弹药库同一条路）
     DeskQuadOffsets _quadOffsets;
     BOOL _editing;
@@ -170,6 +182,14 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     lists[DeskMonitorMetricMemory] = [self rank:byPid key:^double(DeskProc *p) { return p.mem; }];
     lists[DeskMonitorMetricEnergy] = [self rank:byPid key:^double(DeskProc *p) { return p.energy; }];
     lists[DeskMonitorMetricNetwork] = [self rank:byPid key:^double(DeskProc *p) { return (double)p.sockets; }];
+
+    // 前四名占比：换拍算一次。分子直接用已经排好的能耗榜，不再遍历一遍全部进程
+    {
+        double total = 0, top4 = 0;
+        for (DeskProc *p in _all) if (p.energy > 0) total += p.energy;
+        for (DeskProc *p in lists[DeskMonitorMetricEnergy]) if (p.energy > 0) top4 += p.energy;
+        _topShare = total > 0 ? top4 / total : 0;
+    }
 
     // 名字截断要量字宽，每帧 16 行都量一遍就是肉眼可见的开销，所以只在数据变更时算一次
     for (int m = 0; m < 4; m++) {
@@ -474,14 +494,27 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     }
 }
 
+- (NSString *)aggregateTextForMetric:(NSInteger)m { return [self aggregateFor:m]; }
+
 - (NSString *)aggregateFor:(NSInteger)m {
     switch (m) {
-        case DeskMonitorMetricCPU: return [NSString stringWithFormat:@"%.0f%%", MAX(0, _totalCPU)];
+        case DeskMonitorMetricCPU:
+            // 榜头原来印"整机 11%"，每行却是"占一核 20.2%"（sysmon 除以 total、procs 除以
+            // wall），两个分母并排放着，用户第一反应就是"总数怎么比单个进程还小"。
+            // 换成同一把尺：全部核加起来的单核百分点（12 核满载 = 1200%）。
+            // 这样"总 ≥ 任意一行"由构造保证，不用心算核数。
+            return [NSString stringWithFormat:@"%.0f%%", MAX(0, _totalCPU) * MonCoreCount()];
         case DeskMonitorMetricMemory: {
             if (_totalMemPhys <= 0) return @"—";
             return [NSString stringWithFormat:@"%.0fG/%.0fG", _totalMemUsed / 1e9, _totalMemPhys / 1e9];
         }
-        case DeskMonitorMetricEnergy: return [NSString stringWithFormat:@"%.1f", MAX(0, _totalEnergy)];
+        case DeskMonitorMetricEnergy:
+            // 原来这里直接印 _totalEnergy —— 全部进程的 cpu + 唤醒×0.08 之和，单位是我自己
+            // 造的（原生活动监视器那个数走 IOReport，这台系统的 IOKit 没导出符号拿不到）。
+            // 自造单位的绝对值求和没有任何含义，用户只会问"191 是什么"。换成有界可读、
+            // 且正是这一榜用途的数：前四名吃掉多少比例。
+            if (_topShare <= 0) return @"—";   // 守卫只看 _topShare：它和读数同源，别拿外部喂的 _totalEnergy 当第二套真相
+            return [NSString stringWithFormat:@"前4占 %.0f%%", MAX(0.0, MIN(100.0, _topShare * 100.0))];
         default: {
             double kb = (MAX(0, _totalNetIn) + MAX(0, _totalNetOut)) / 1024.0;
             if (kb < 1.0) return @"静默";

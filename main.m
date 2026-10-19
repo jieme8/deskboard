@@ -456,6 +456,7 @@ static const CGFloat kVaultCoverShare = 0.25;
     card.onUserMove = ^{ [weakSelf recordPendingPlaceInWindow:weakSelfWindow]; };
     w.contentView = card;
     [card refreshSource];
+    [self logWindowSnapshot:w tag:@"卡片"];
     return w;
 }
 
@@ -550,6 +551,7 @@ static const CGFloat kVaultCoverShare = 0.25;
     // 组件自己说"我要动了"，就把动画表叫回来。空闲停表之后，全靠这一条恢复
     v.onNeedFrames = ^{ [weakSelf resumeWidgetTicking]; };
     w.contentView = v;
+    [self logWindowSnapshot:w tag:@"弹药库"];
     return w;
 }
 
@@ -779,6 +781,17 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
 #pragma mark - 组件 3：活动监视器
 
 // 只贴桌面图标层，和另两块组件同一条硬约束：任何应用窗口都在它之上
+// 三块组件都拍一条同样格式的环境快照。源码看起来一样不等于运行时一样：层级、能不能成
+// key、吃不吃鼠标这些都可能被 AppKit 悄悄改。在用户真拖一次之前，这三行就是唯一的对照实验。
+- (void)logWindowSnapshot:(NSWindow *)w tag:(NSString *)tag {
+    if (!w) return;
+    NSRect f = w.frame;
+    DeskLog(@"环境快照 %@：层=%ld 可成key=%d 点击穿透=%d 收移动=%d 可拖背景=%d 窗影=%d 框=(%.0f,%.0f,%.0fx%.0f) 屏数=%ld",
+            tag, (long)w.level, w.canBecomeKeyWindow, w.ignoresMouseEvents,
+            w.acceptsMouseMovedEvents, w.movableByWindowBackground, w.hasShadow,
+            f.origin.x, f.origin.y, f.size.width, f.size.height, (long)[NSScreen screens].count);
+}
+
 - (NSRect)monitorFrameForScreen:(NSScreen *)screen {
     NSRect vf = screen.visibleFrame;
     DeskPlace p = [_monitorPlaces effectivePlaceForScreen:screen];
@@ -853,6 +866,7 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
                             histAvg:avg histCovered:covered forWindow:weakW];
     };
     w.contentView = v;
+    [self logWindowSnapshot:w tag:@"监视器"];
     return w;
 }
 

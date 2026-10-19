@@ -91,6 +91,9 @@ typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
 - (void)dragWindowToMouse:(NSPoint)mouseNow;
 - (void)dragCorner:(NSInteger)corner toCanvasPoint:(NSPoint)p;
 - (NSBitmapImageRep *)bakedFlatBitmap;
+// 只给校验用：素材源本体。变形态画的是它烘出来的位图，凡是"读数依赖的数"没拷过去，
+// 位图上就是另一个值（能耗占比曾经就差点全印 0%，因为分母没跟着过桥），所以得过这道。
+- (nullable DeskMonitorView *)flatSourceForVerify;
 - (void)tick:(double)dt;
 - (BOOL)needsRedraw;
 

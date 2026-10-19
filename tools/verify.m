@@ -1154,6 +1154,24 @@ int main(int argc, const char *argv[]) {
             Say(blue > 300, @"烘出来的位图里有 %lu 个进度条蓝像素 —— 素材源的条子没退回 0",
                 (unsigned long)blue);
         }
+        // 变形态画的是素材源烘出来的位图 —— 凡是"读数依赖的数"没搬过去，位图上就是另一个值。
+        // 能耗占比差点栽在这：正形态印 41%、变形那张全印 0%。注意这条守的是"变形前后读数一致"
+        // 这个不变量本身，**不是**守 takeSnapshotFrom 里某一行赋值：实测把 `_energyTotal = src->_energyTotal`
+        // 加回去再删掉，215 条一条不动 —— 因为 updateRows: 会拿 _all 重算分母，那行赋值是冗余的（已删）。
+        {
+            DeskMonitorView *src = [mv flatSourceForVerify];
+            Say(src != nil, @"变形态烘得出素材源");
+            Say([src energyShareTotal] > 0 && fabs([src energyShareTotal] - [mv energyShareTotal]) < 0.001,
+                @"素材源自己算出的分母 >0 且与本体相等：%.1f == %.1f",
+                [src energyShareTotal], [mv energyShareTotal]);
+            NSString *liveAgg = [mv aggregateTextForMetric:DeskMonitorMetricEnergy];
+            NSString *flatAgg = [src aggregateTextForMetric:DeskMonitorMetricEnergy];
+            Say([liveAgg isEqualToString:flatAgg], @"能耗榜头两边同一个串：「%@」/「%@」", flatAgg, liveAgg);
+            NSString *liveRow = [mv valueTextFor:bake[0] metric:DeskMonitorMetricEnergy];
+            NSString *flatRow = [src valueTextFor:bake[0] metric:DeskMonitorMetricEnergy];
+            Say([liveRow isEqualToString:flatRow] && [liveRow hasSuffix:@"%"],
+                @"同一行在正形态和变形态里读数一致：%@ / %@", liveRow, flatRow);
+        }
         // 弹药库踩过这个坑：变形态画的是素材源烘出来的位图，setStyle: 不转给素材源的话
         // "一进调角，无论选哪种外观都退回默认样式"。这里换两次外观各烘一张，比像素。
         NSUInteger diff = 0;

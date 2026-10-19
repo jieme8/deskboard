@@ -745,8 +745,10 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     _style = src->_style;
     _totalCPU = src->_totalCPU; _totalMemUsed = src->_totalMemUsed; _totalMemPhys = src->_totalMemPhys;
     _totalEnergy = src->_totalEnergy;
-    _energyTotal = src->_energyTotal;
     _procCount = src->_procCount;
+    // 能耗分母不在这份清单里，是故意的：下面那句 updateRows: 会拿 src->_all 重算一遍
+    // _energyTotal / _topShare，再显式搬一次就是给同一个数留第二个来源。
+    // 负向对照量过：把 `_energyTotal = src->_energyTotal` 加回来再删掉，215 条断言一条不动。
     [self updateRows:src->_all];
     for (int m = 0; m < 4; m++)
         for (int r = 0; r < kMonitorRowsPerQuadrant; r++) { _cellAvg[m][r] = src->_cellAvg[m][r];
@@ -779,6 +781,12 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     [self syncWarp];
     [self refreshFlat];
     return _flatRep;
+}
+
+- (DeskMonitorView *)flatSourceForVerify {
+    [self syncWarp];
+    [self refreshFlat];
+    return _flatSource;
 }
 
 // 拖一个角：把该角挪到画布坐标 p，再夹回画布内。单独拆出来是因为真实拖拽在这台机器上

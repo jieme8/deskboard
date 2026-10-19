@@ -110,6 +110,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     NSRect _hover;                  // 空矩形 = 没悬停
     NSInteger _hoverMetric, _hoverRow;
     BOOL _dragging;
+    BOOL _dragLogged;            // 本次拖拽是否已经记过日志
     NSPoint _dragStartMouse;      // 按下时鼠标的屏幕坐标
     NSRect _frameAtDragStart;     // 按下时窗口的位置
     NSRect _standInScreenRect;
@@ -907,6 +908,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     // 循环只能干等到 8 秒超时，用户看到的就是"拖不动"。卡片面板和弹药库都是
     // mouseDown/mouseDragged/mouseUp 三段式，跟着它们走才对。
     _dragging = YES;
+    _dragLogged = NO;
     _dragStartMouse = NSEvent.mouseLocation;
     _frameAtDragStart = w.frame;
     [self setNeedsDisplay:YES];
@@ -916,6 +918,12 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     if (!_dragging) return;
     NSWindow *w = self.window;
     if (!w) return;
+    // 只记第一次拖拽事件：这台机器没有辅助功能权限、我没法自己拖，所以留一条证据链 ——
+    // 万一还是拖不动，日志能立刻区分"事件根本没送到视图"和"送到了但算错了"
+    if (!_dragLogged) {
+        _dragLogged = YES;
+        if (self.onLog) self.onLog([NSString stringWithFormat:@"收到拖拽事件，开始挪窗"]);
+    }
     [w setFrame:VaultDragFrame(_frameAtDragStart, _dragStartMouse, NSEvent.mouseLocation)
         display:YES animate:NO];
 }

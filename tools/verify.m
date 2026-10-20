@@ -882,6 +882,19 @@ int main(int argc, const char *argv[]) {
                     && ![zz.lowercaseString containsString:@"inf"], @"能耗全 0 时读数「%@」不是 nan", zz);
                 [mv updateRows:sc];   // 恢复现场
             }
+            {   // 同一榜一种进制：行内内存和榜头都用 1e9 的 G。
+                // 旧写法用 1048576/1024，1.5e9 会印成 1.4G（这条断言会红）。
+                DeskProc *mp = [DeskProc new];
+                mp.pid = 7001; mp.name = @"mem"; mp.cpu = 0; mp.energy = 0;
+                mp.wakeups = 0; mp.sockets = 0;
+                mp.mem = 1.5e9;
+                NSString *big = [mv valueTextFor:mp metric:DeskMonitorMetricMemory];
+                Say([big isEqualToString:@"1.5G"],
+                    @"1.5e9 字节 →「%@」（十进制 G，和榜头同一进制）", big);
+                mp.mem = 926e6;
+                NSString *small = [mv valueTextFor:mp metric:DeskMonitorMetricMemory];
+                Say([small isEqualToString:@"926M"], @"926e6 字节 →「%@」", small);
+            }
         }
 
         printf("\n活动监视器：12 小时那根的槽该不该画（没有记录就没有槽）\n");

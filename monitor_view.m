@@ -664,8 +664,10 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         // 用户读不出这是"占一个核"还是"占整机"。
         case DeskMonitorMetricCPU: return [NSString stringWithFormat:@"%.1f%%", p.cpu];
         case DeskMonitorMetricMemory: {
-            double mb = p.mem / 1048576.0;
-            return mb >= 1024.0 ? [NSString stringWithFormat:@"%.1fG", mb / 1024.0]
+            // 榜头是 1e9 的 GB，行内原来走 1048576/1024 —— 同一个 1.5GB 的进程
+            // 会被印成 1.4G，同一榜两种进制。统一成十进制（和榜头"23G/24G"一把尺）。
+            double mb = p.mem / 1e6;
+            return mb >= 1000.0 ? [NSString stringWithFormat:@"%.1fG", mb / 1000.0]
                                 : [NSString stringWithFormat:@"%.0fM", mb];
         }
         // 能耗每行原来是裸的分（用户撞上的就是那个 "191"）—— 单位是我按

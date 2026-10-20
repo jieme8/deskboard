@@ -1079,6 +1079,8 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     }
     DeskMonitorView *mv = (DeskMonitorView *)cv;
     NSRect f0 = w.frame;
+    // 进来先抄一份档位：每一发拖动都会经 onUserMove 改写存档，跑完要按这份还原
+    DeskPlace before = [_monitorPlaces placeForScreen:(w.screen ?: [NSScreen mainScreen])];
     NSTimeInterval ts = [NSDate date].timeIntervalSince1970;
     NSPoint mid = NSMakePoint(NSWidth(f0) / 2, NSHeight(f0) / 2);
     NSEvent *down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:mid modifierFlags:0
@@ -1087,12 +1089,15 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     NSEvent *up = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp location:mid modifierFlags:0
                                     timestamp:ts windowNumber:w.windowNumber context:nil
                                  eventNumber:203 clickCount:1 pressure:0.0];
-    // 四个方向各试一次：存档的 dx/dy 被夹在 [16, 屏宽-卡宽-16] 里，组件此刻正贴在
-    // 边距下限（右上，dx=dy=16）。朝上/朝右的位移会被夹回下限，下一次重申就把窗口拉回原位
-    // —— 用户看到的就是"按住拖了，一松手自己弹回去"。量清楚到底哪几个方向保得住。
-    static const CGFloat off[4][2] = { { 30, 30 }, { -30, -30 }, { 8, 8 }, { 0, -60 } };
-    static const char *name[4] = { "右上(超边距)", "左下(边距内)", "右上(边距内)", "正下 60" };
-    for (int i = 0; i < 4; i++) {
+    // 四个方向各试一次：存档的 dx/dy 原来夹在 [16, …]，组件正贴在边距下限，朝上/朝右的位移
+    // 会被夹回下限，下一次重申就把窗口拉回原位 —— 用户看到的就是"按住拖了又自己弹回来"。
+    // 再加三发跨中线的：corner 一翻，dx/dy 就从"距左/距下"换成"距右/距上"，
+    // 换边算式是历史事故区（那次 60pt 漂移就是这么来的），所以必须单独量。
+    static const CGFloat off[][2] = { { 30, 30 }, { -30, -30 }, { 8, 8 }, { 0, -60 },
+                                      { -400, 0 }, { 0, -400 }, { -400, -400 } };
+    static const char *name[] = { "右上(超边距)", "左下(边距内)", "右上(边距内)", "正下 60",
+                                  "跨横中线 左400", "跨纵中线 下400", "跨两线 左下400" };
+    for (size_t i = 0; i < sizeof(off) / sizeof(off[0]); i++) {
         NSPoint c = NSEvent.mouseLocation;
         [mv mouseDown:down];
         [mv dragWindowToMouse:NSMakePoint(c.x + off[i][0], c.y + off[i][1])];
@@ -1100,16 +1105,25 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
         NSRect f1 = w.frame;
         [self applyMonitorFrames];       // 落档守不守得住：按存档重申一次再看
         NSRect f2 = w.frame;
-        BOOL held = fabs(f2.origin.x - f1.origin.x) < 0.5 && fabs(f2.origin.y - f1.origin.y) < 0.5;
+        // 三种结果必须分开说，不然工具会自己骗自己：
+        //   守住   = 重申后停在松手处（用户要的就是这个）
+        //   夹边界 = 松手处超出可视区，被合法夹到边界上并停住（不是 bug）
+        //   弹回原位 = 重申后回到按下前的位置 —— 这才是"拖不动"
+        CGFloat backToStart = hypot(f2.origin.x - f0.origin.x, f2.origin.y - f0.origin.y);
+        CGFloat held = hypot(f2.origin.x - f1.origin.x, f2.origin.y - f1.origin.y);
+        const char *verdict = held < 0.5 ? "守住" : (backToStart < 0.5 ? "弹回原位(bug)" : "夹到可视边界");
         DeskLog(@"自检 %@：拖后位移(%+.0f,%+.0f) 重申后(%+.0f,%+.0f) %@",
                 [NSString stringWithUTF8String:name[i]],
                 f1.origin.x - f0.origin.x, f1.origin.y - f0.origin.y,
                 f2.origin.x - f0.origin.x, f2.origin.y - f0.origin.y,
-                held ? @"守住" : @"被拉回");
-        [w setFrameOrigin:f0.origin];    // 每一发都先复原，别让上一发的夹边污染下一发
+                [NSString stringWithUTF8String:verdict]);
+        [w setFrameOrigin:f0.origin];    // 每一发都先复原，别让上一发的落档污染下一发
         [self applyMonitorFrames];
     }
-    [self saveMonitorPlaceInWindow:w];
+    // 自检不许动用户的存档：每一发的落档都会改写档位，跑完必须还原成进来时的样子
+    NSScreen *scr = w.screen ?: [NSScreen mainScreen];
+    [_monitorPlaces setPlace:before forKey:[_monitorPlaces keyForScreen:scr]];
+    [self saveConfig];
     [self applyMonitorFrames];
 }
 

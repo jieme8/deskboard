@@ -1455,6 +1455,21 @@ int main(int argc, const char *argv[]) {
         DeskMonitorHoverView *hv = [DeskMonitorHoverView new];
         Say(!hv.wantsLayer, @"悬停浮层也不开图层");
 
+        {
+            // 「第二根线看不懂」的答案就是这两句人话：榜头图例 + 悬停气泡那行。
+            // 上面那些断言守的是画得对不对（槽该不该画、两根同不同一把尺），
+            // 可图例文字被谁顺手删了或改没了，宽度那条照样绿 —— 这里补一道文字闸。
+            NSString *src = [NSString stringWithContentsOfFile:@"monitor_view.m"
+                                                      encoding:NSUTF8StringEncoding error:NULL];
+            Say(src.length > 0, @"读到了 monitor_view.m 源码（这条断言的前提）");
+            Say([src rangeOfString:@"亮条=现在 淡条=12小时平均"].location != NSNotFound,
+                @"榜头图例那句还在（①的答案文字本体）");
+            Say([src rangeOfString:@"12h 平均 = 过去 12 小时"].location != NSNotFound,
+                @"悬停气泡那句解释还在（①在行级的答案）");
+            Say([src rangeOfString:@"双击看原生活动监视器"].location != NSNotFound,
+                @"气泡里那条入口提示还在");
+        }
+
         printf("\n%d 项通过，%d 项失败\n", gPass, gFail);
         return gFail == 0 ? 0 : 1;
     }

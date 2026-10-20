@@ -1066,6 +1066,53 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     DeskLog(@"活动监视器微调 (%+.0f,%+.0f)pt，不用按住拖也能挪", dx, dy);
 }
 
+// 一键自检：把「按住并拖 30pt」直接喂给真窗口的真视图，走的就是生产路径
+// （mouseDown → mouseDragged → dragWindowToMouse → 夹边 → onUserMove 落档 → 重申）。
+// 它不依赖真鼠标，也不受遮挡影响（点的是菜单栏），所以组件被别的窗口压住时照样能出结论：
+// 位移没到手 = 代码链本身还有 bug；位移到手且重申后守住 = 剩下的只可能是真事件没送进来。
+- (void)selfTestMonitorDrag:(id)sender {
+    NSWindow *w = _monitorWindows.firstObject;
+    NSView *cv = w.contentView;
+    if (![cv isKindOfClass:[DeskMonitorView class]]) {
+        DeskLog(@"自检：没有可测的活动监视器窗口");
+        return;
+    }
+    DeskMonitorView *mv = (DeskMonitorView *)cv;
+    NSRect f0 = w.frame;
+    NSTimeInterval ts = [NSDate date].timeIntervalSince1970;
+    NSPoint mid = NSMakePoint(NSWidth(f0) / 2, NSHeight(f0) / 2);
+    NSEvent *down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:mid modifierFlags:0
+                                       timestamp:ts windowNumber:w.windowNumber context:nil
+                                     eventNumber:201 clickCount:1 pressure:1.0];
+    NSEvent *up = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp location:mid modifierFlags:0
+                                    timestamp:ts windowNumber:w.windowNumber context:nil
+                                 eventNumber:203 clickCount:1 pressure:0.0];
+    // 四个方向各试一次：存档的 dx/dy 被夹在 [16, 屏宽-卡宽-16] 里，组件此刻正贴在
+    // 边距下限（右上，dx=dy=16）。朝上/朝右的位移会被夹回下限，下一次重申就把窗口拉回原位
+    // —— 用户看到的就是"按住拖了，一松手自己弹回去"。量清楚到底哪几个方向保得住。
+    static const CGFloat off[4][2] = { { 30, 30 }, { -30, -30 }, { 8, 8 }, { 0, -60 } };
+    static const char *name[4] = { "右上(超边距)", "左下(边距内)", "右上(边距内)", "正下 60" };
+    for (int i = 0; i < 4; i++) {
+        NSPoint c = NSEvent.mouseLocation;
+        [mv mouseDown:down];
+        [mv dragWindowToMouse:NSMakePoint(c.x + off[i][0], c.y + off[i][1])];
+        [mv mouseUp:up];
+        NSRect f1 = w.frame;
+        [self applyMonitorFrames];       // 落档守不守得住：按存档重申一次再看
+        NSRect f2 = w.frame;
+        BOOL held = fabs(f2.origin.x - f1.origin.x) < 0.5 && fabs(f2.origin.y - f1.origin.y) < 0.5;
+        DeskLog(@"自检 %@：拖后位移(%+.0f,%+.0f) 重申后(%+.0f,%+.0f) %@",
+                [NSString stringWithUTF8String:name[i]],
+                f1.origin.x - f0.origin.x, f1.origin.y - f0.origin.y,
+                f2.origin.x - f0.origin.x, f2.origin.y - f0.origin.y,
+                held ? @"守住" : @"被拉回");
+        [w setFrameOrigin:f0.origin];    // 每一发都先复原，别让上一发的夹边污染下一发
+        [self applyMonitorFrames];
+    }
+    [self saveMonitorPlaceInWindow:w];
+    [self applyMonitorFrames];
+}
+
 - (NSMenu *)cornerMenuForTitle:(NSString *)title action:(SEL)action {
     NSMenu *m = [[NSMenu alloc] initWithTitle:title];
     static const char *names[4] = { "左上角", "右上角", "左下角", "右下角" };
@@ -1101,11 +1148,14 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
              + (NSMidX(f) > vf.origin.x + vf.size.width / 2.0 ? 1 : 0);
     p.dx = MAX(0, (p.corner == 1 || p.corner == 3) ? NSMaxX(vf) - NSMaxX(f) : f.origin.x - vf.origin.x);
     p.dy = MAX(0, (p.corner >= 2) ? f.origin.y - vf.origin.y : NSMaxY(vf) - NSMaxY(f));
-    const CGFloat margin = 16.0;
-    CGFloat maxDx = MAX(margin, vf.size.width - kMonitorViewWidth - margin);
-    CGFloat maxDy = MAX(margin, vf.size.height - kMonitorViewHeight - margin);
-    p.dx = MIN(MAX(p.dx, margin), maxDx);
-    p.dy = MIN(MAX(p.dy, margin), maxDy);
+    // 下限必须是 0。原来夹在 [16, …]：往边上拖过头的那一次会被夹回 16，而"屏幕参数变更 →
+    // 只重申位置"在这台机器上每几十秒就来一次，于是拖完自己弹回原位。活体自检实测：
+    // 右上(超边距)+30,+30 → 重申后 +0,+0 被拉回；边距内的三个方向 → 守住。
+    // 现在只保证整块留在可视区内 —— 用户拖到哪就停在哪，贴在边上也算他要的位置。
+    CGFloat maxDx = MAX(0, vf.size.width - kMonitorViewWidth);
+    CGFloat maxDy = MAX(0, vf.size.height - kMonitorViewHeight);
+    p.dx = MIN(MAX(p.dx, 0), maxDx);
+    p.dy = MIN(MAX(p.dy, 0), maxDy);
     if (NSIntersectsRect(f, vf)) {
         NSString *key = [_monitorPlaces keyForScreen:screen];
         [_monitorPlaces setPlace:p forKey:key];
@@ -1126,6 +1176,11 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
                                                          userInfo:nil repeats:YES];
     [[NSRunLoop mainRunLoop] addTimer:_monitorSampleTimer forMode:NSRunLoopCommonModes];
     [self refreshMonitor:nil];
+    if (getenv("DESKBOARD_SELFTEST")) {
+        // 我这边没有真鼠标、也没有辅助功能权限：带这个环境变量启动，自检自己跑一遍
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{ [self selfTestMonitorDrag:nil]; });
+    }
 }
 
 // 5 秒一拍采进程。采和画是分开的：动画表空闲就停，但榜不能停，
@@ -1569,6 +1624,7 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
         }
         [self addSubmenuTo:mon title:@"微调 20pt（不用按住拖）" menu:nudge];
     }
+    DeskAddAction(mon, @"自检：模拟拖 30pt（不用真鼠标）", self, @selector(selfTestMonitorDrag:));
     [mon addItem:NSMenuItem.separatorItem];
     _monitorEditItem = DeskAddAction(mon, @"调角模式", self, @selector(toggleMonitorEditing:));
     DeskAddAction(mon, @"复位角点", self, @selector(resetMonitorQuad:));

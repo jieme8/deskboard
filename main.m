@@ -15,6 +15,7 @@
 #import "vault_art.h"
 #import "procs.h"
 #import "monitor_view.h"
+#import "backdrop.h"
 #import <libproc.h>
 #import <sys/proc_info.h>
 
@@ -1168,6 +1169,11 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     }
     DeskMonitorView *mv = (DeskMonitorView *)cv;
     NSRect f0 = w.frame;
+    // 先报本进程眼里的壁纸：门里那 5 条红是 CLI 进程量的（域/容器都可能不一样），
+    // 组件到底有没有"真模糊底"必须在 App 自己进程里量，别拿 CLI 的结论代替。
+    NSString *wp = [[DeskBackdrop shared] wallpaperPath];
+    NSImage *bd = [[DeskBackdrop shared] imageForRect:f0 dark:YES];   // 未变形时窗口=卡片矩形
+    DeskLog(@"自检 壁纸：路径=%@ 采样=%@", wp.lastPathComponent ?: @"(无)", bd ? @"有底图" : @"无底图");
     // 进来先抄一份档位：每一发拖动都会经 onUserMove 改写存档，跑完要按这份还原
     DeskPlace before = [_monitorPlaces placeForScreen:(w.screen ?: [NSScreen mainScreen])];
     NSTimeInterval ts = [NSDate date].timeIntervalSince1970;

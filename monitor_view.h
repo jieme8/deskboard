@@ -119,6 +119,8 @@ typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
 @property (nonatomic, assign) double histAvg;
 @property (nonatomic, assign) double histCovered;
 @property (nonatomic, assign) NSInteger histMetric;
+// 气泡里那行 12h 文案（只读，用来断言单位与进制，不用开窗口）
+- (NSString *)historyText;
 @end
 
 NS_ASSUME_NONNULL_END

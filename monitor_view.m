@@ -22,6 +22,9 @@ static const CGFloat kValueW = 34.0;
 static const CGFloat kGridTop = 48.0;          // 顶栏 + 分隔线 + 间距之后的第一格上沿
 
 // 逻辑核数。榜头的 CPU 要换算成"全部核加起来"的口径，才能和每行同尺（见 aggregateFor:）
+// 定义在文件后半（悬停浮层那边），这里前置声明，好让 historyText 这个只读口能用它
+static NSString *MonHistText(NSInteger metric, double avg, double covered, double energyTotal);
+
 static NSInteger MonCoreCount(void) {
     static NSInteger cores;
     static dispatch_once_t once;
@@ -1071,6 +1074,10 @@ static NSString *MonUptime(long long startedAt) {
     NSFont *_nameFont, *_metaFont, *_labelFont, *_valueFont;
 }
 
+- (NSString *)historyText {
+    return MonHistText(_histMetric, _histAvg, _histCovered, self.energyTotal);
+}
+
 - (instancetype)initWithFrame:(NSRect)f {
     if ((self = [super initWithFrame:f])) {
         _nameFont = MonSemibold(11.5);
@@ -1088,9 +1095,13 @@ static NSString *MonHistText(NSInteger metric, double avg, double covered, doubl
     if (covered <= 0) return nil;
     switch (metric) {
         case DeskMonitorMetricCPU: return [NSString stringWithFormat:@"12h %.1f%%", avg];
-        case DeskMonitorMetricMemory:
-            return avg >= 1e9 ? [NSString stringWithFormat:@"12h %.1fG", avg / 1e9]
-                              : [NSString stringWithFormat:@"12h %.0fM", avg / 1048576.0];
+        case DeskMonitorMetricMemory: {
+            // 和行内、榜头同一进制（1e6/1e9）。混用 1048576 会把 900MB 印成 858M，
+            // 悬停里的 12h 值和行内当前值就不是一把尺了。
+            double mb = avg / 1e6;
+            return mb >= 1000.0 ? [NSString stringWithFormat:@"12h %.1fG", mb / 1000.0]
+                                : [NSString stringWithFormat:@"12h %.0fM", mb];
+        }
         case DeskMonitorMetricEnergy:
             // 分母没喂进来就宁可空着：印个 "12h 0%" 是假数据，比不印更糟
             if (energyTotal <= 0) return nil;

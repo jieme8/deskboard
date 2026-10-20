@@ -1492,6 +1492,18 @@ int main(int argc, const char *argv[]) {
                 @"气泡里那条入口提示还在");
         }
         {
+            // 悬停里那行 12h 内存也必须和行内/榜头同一进制：900MB 印成 858M 就是两把尺。
+            DeskMonitorHoverView *h = [[DeskMonitorHoverView alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
+            h.histMetric = DeskMonitorMetricMemory;
+            h.histCovered = 1.0;
+            h.histAvg = 900e6;
+            Say([[h historyText] isEqualToString:@"12h 900M"],
+                @"悬停 12h 内存用十进制：「%@」（旧写法会印 858M）", [h historyText]);
+            h.histAvg = 1.5e9;
+            Say([[h historyText] isEqualToString:@"12h 1.5G"],
+                @"悬停 12h 内存 1.5e9 →「%@」", [h historyText]);
+        }
+        {
             // 存档夹边：只保证整块留在可视区，下限必须是 0。
             // 这条钉的是"拖不动"的真凶回归 —— 把下限改回 16，第一条立刻变红。
             NSRect vf2 = NSMakeRect(0, 0, 1512, 921);

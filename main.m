@@ -1200,6 +1200,16 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     for (size_t i = 0; i < sizeof(off) / sizeof(off[0]); i++) {
         NSPoint c = NSEvent.mouseLocation;
         [mv mouseDown:down];
+        // 光标没动的一次真 mouseDragged：窗口必须一步都不漂。
+        // 自检此前只直接调 dragWindowToMouse:，等于绕开了用户实际走的那个处理器
+        // （日志里 44 条自检按下全是「拖了 0 帧」就是证据）。
+        NSEvent *drag0 = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDragged
+                                            location:NSMakePoint(NSWidth(f0) / 2, NSHeight(f0) / 2)
+                                        modifierFlags:0 timestamp:ts windowNumber:w.windowNumber
+                                             context:nil eventNumber:202 clickCount:1 pressure:1.0];
+        [mv mouseDragged:drag0];
+        NSRect fz = w.frame;
+        BOOL noDrift = hypot(fz.origin.x - f0.origin.x, fz.origin.y - f0.origin.y) < 0.5;
         [mv dragWindowToMouse:NSMakePoint(c.x + off[i][0], c.y + off[i][1])];
         [mv mouseUp:up];
         NSRect f1 = w.frame;
@@ -1212,11 +1222,11 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
         CGFloat backToStart = hypot(f2.origin.x - f0.origin.x, f2.origin.y - f0.origin.y);
         CGFloat held = hypot(f2.origin.x - f1.origin.x, f2.origin.y - f1.origin.y);
         const char *verdict = held < 0.5 ? "守住" : (backToStart < 0.5 ? "弹回原位(bug)" : "夹到可视边界");
-        DeskLog(@"自检 %@：拖后位移(%+.0f,%+.0f) 重申后(%+.0f,%+.0f) %@",
+        DeskLog(@"自检 %@：拖后位移(%+.0f,%+.0f) 重申后(%+.0f,%+.0f) 零漂=%d %s",
                 [NSString stringWithUTF8String:name[i]],
                 f1.origin.x - f0.origin.x, f1.origin.y - f0.origin.y,
                 f2.origin.x - f0.origin.x, f2.origin.y - f0.origin.y,
-                [NSString stringWithUTF8String:verdict]);
+                noDrift, verdict);
         [w setFrameOrigin:f0.origin];    // 每一发都先复原，别让上一发的落档污染下一发
         [self applyMonitorFrames];
     }

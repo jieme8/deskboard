@@ -1375,6 +1375,28 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
             if (mode == 2) [self selfTestMonitorPressPoints:nil];
             else if (mode == 3) [self selfTestMonitorNudgeWalk:nil];
             else if (mode == 4) [self selfTestMonitorGrid:nil];
+            else if (mode == 5) {
+                // 摆到指定格并**停在那里**（自检用；不收尾，方便在外面用真 HID 事件去拖它）
+                const char *cell = getenv("DESKBOARD_CELL");
+                NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:@"" action:NULL keyEquivalent:@""];
+                it.tag = cell ? atoi(cell) : 4;
+                [self placeMonitorAtCell:it];
+                DeskLog(@"自检 摆到格 %ld（停在此处，等外部真事件）", (long)it.tag);
+            }
+            else if (mode == 6) {
+                // 临时把组件抬到普通窗口之上 N 秒，让外部可以投真 HID 事件做端到端拖动验证；
+                // 到点自动还原到桌面图标层。用户选的是"被压住靠菜单"，这是验证手段、不是产品行为。
+                NSWindow *mw = _monitorWindows.firstObject;
+                DeskLog(@"自检 临时提层：%ld → %ld，20 秒后还原",
+                        (long)mw.level, (long)NSStatusWindowLevel);
+                for (NSWindow *x in _monitorWindows) x.level = NSStatusWindowLevel;
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20.0 * NSEC_PER_SEC)),
+                               dispatch_get_main_queue(), ^{
+                    for (NSWindow *x in self->_monitorWindows) x.level = kCGDesktopIconWindowLevel;
+                    for (NSWindow *x in self->_monitorWindows) [x orderFrontRegardless];
+                    DeskLog(@"自检 层级已还原：%ld", (long)self->_monitorWindows.firstObject.level);
+                });
+            }
             else [self selfTestMonitorDrag:nil];
         });
     }

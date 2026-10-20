@@ -1227,8 +1227,14 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
                 f1.origin.x - f0.origin.x, f1.origin.y - f0.origin.y,
                 f2.origin.x - f0.origin.x, f2.origin.y - f0.origin.y,
                 noDrift, verdict);
-        [w setFrameOrigin:f0.origin];    // 每一发都先复原，别让上一发的落档污染下一发
+        // 复原必须连存档一起还原：只 setFrameOrigin 的话，紧跟的 applyMonitorFrames 会按
+        // 上一发写脏的存档把窗口搬回去，于是这一发的"按下前基准"根本不是 f0（实测串出 15pt）。
+        [w setFrameOrigin:f0.origin];
+        NSScreen *rs = w.screen ?: [NSScreen mainScreen];
+        [_monitorPlaces setPlace:before forKey:[_monitorPlaces keyForScreen:rs]];
         [self applyMonitorFrames];
+        NSAssert(hypot(w.frame.origin.x - f0.origin.x, w.frame.origin.y - f0.origin.y) < 1.0,
+                 @"自检复原失败：基准漂了");
     }
     mv.onLog = savedLog;
     // 自检不许动用户的存档：每一发的落档都会改写档位，跑完必须还原成进来时的样子

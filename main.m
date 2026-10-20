@@ -1046,6 +1046,32 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
 // 拖不动时的第二条出路：不靠鼠标，用菜单把组件每次挪 20pt。
 // 先搬窗口、再复用 saveMonitorPlaceInWindow: 落档 —— 存档是"角 + 距边距离"，
 // 自己再算一遍 dx/dy 的符号就是给同一个换算留第二套真相（那 60pt 漂移就是这么来的）。
+// 九宫格一键摆位：用户已选定"被压住时靠菜单摆位"，而原来只能 20pt 一格格挪，
+// 从右上角挪到屏幕中间要二十多下。这里给九个落点，一次到位（不依赖按住拖，也不怕遮挡）。
+// tag = 行*3 + 列，行 0=上 1=中 2=下，列 0=左 1=中 2=右。
+- (void)placeMonitorAtCell:(id)sender {
+    NSWindow *w = _monitorWindows.firstObject;
+    if (!w) { DeskLog(@"九宫格摆位：没有可摆的监视器窗口"); return; }
+    NSScreen *screen = w.screen ?: [NSScreen mainScreen];
+    NSRect vf = screen.visibleFrame;
+    NSInteger tag = [sender tag] & 15;
+    NSInteger row = tag / 3, col = tag % 3;
+    const CGFloat margin = 16.0;
+    CGFloat x = (col == 0) ? NSMinX(vf) + margin
+              : (col == 1) ? NSMidX(vf) - kMonitorViewWidth / 2.0
+                           : NSMaxX(vf) - kMonitorViewWidth - margin;
+    CGFloat y = (row == 0) ? NSMaxY(vf) - kMonitorViewHeight - margin
+              : (row == 1) ? NSMidY(vf) - kMonitorViewHeight / 2.0
+                           : NSMinY(vf) + margin;
+    [w setFrameOrigin:NSMakePoint(x, y)];
+    [self saveMonitorPlaceInWindow:w];   // 存档是"角 + 距边"，换算只留这一处
+    [self applyMonitorFrames];           // 夹边后按存档重申，窗口和存档保持一致
+    static const char *rows[3] = { "上", "中", "下" };
+    static const char *cols[3] = { "左", "中", "右" };
+    DeskLog(@"活动监视器摆到 %s%s（九宫格，不用按住拖）→ 窗口原点(%.0f,%.0f)",
+            rows[row & 3], cols[col & 3], w.frame.origin.x, w.frame.origin.y);
+}
+
 - (void)nudgeMonitor:(id)sender {
     CGFloat dx = 0, dy = 0;
     switch ([sender tag]) {
@@ -1158,6 +1184,37 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     [_monitorPlaces setPlace:before forKey:[_monitorPlaces keyForScreen:scr]];
     [self applyMonitorFrames];
     [self saveConfig];
+}
+
+// 九宫格自检：九个落点必须各自到位、且重申后不偏 —— 这是"被压住时唯一可用"的那条路径。
+- (void)selfTestMonitorGrid:(id)sender {
+    NSWindow *w = _monitorWindows.firstObject;
+    if (!w) { DeskLog(@"自检：没有可测的活动监视器窗口"); return; }
+    NSScreen *scr = w.screen ?: [NSScreen mainScreen];
+    NSRect vf = scr.visibleFrame;
+    DeskPlace before = [_monitorPlaces placeForScreen:scr];
+    int bad = 0;
+    for (int i = 0; i < 9; i++) {
+        NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:@"" action:NULL keyEquivalent:@""];
+        it.tag = i;
+        [self placeMonitorAtCell:it];
+        NSRect f = w.frame;
+        int row = i / 3, col = i % 3;
+        CGFloat wantX = col == 0 ? NSMinX(vf) + 16
+                      : col == 1 ? NSMidX(vf) - kMonitorViewWidth / 2.0
+                                 : NSMaxX(vf) - kMonitorViewWidth - 16;
+        CGFloat wantY = row == 0 ? NSMaxY(vf) - kMonitorViewHeight - 16
+                      : row == 1 ? NSMidY(vf) - kMonitorViewHeight / 2.0
+                                 : NSMinY(vf) + 16;
+        BOOL ok = fabs(f.origin.x - wantX) < 0.6 && fabs(f.origin.y - wantY) < 0.6;
+        if (!ok) bad++;
+        DeskLog(@"自检 九宫格 %d：期望(%.0f,%.0f) 实测(%.0f,%.0f) %@",
+                i, wantX, wantY, f.origin.x, f.origin.y, ok ? @"对上" : @"偏了");
+    }
+    [_monitorPlaces setPlace:before forKey:[_monitorPlaces keyForScreen:scr]];
+    [self saveConfig];
+    [self applyMonitorFrames];
+    DeskLog(@"自检 九宫格：9 个落点 %d 个对不上（跑完已还原原档位）", bad);
 }
 
 - (void)selfTestMonitorDrag:(id)sender {
@@ -1317,6 +1374,7 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
                        dispatch_get_main_queue(), ^{
             if (mode == 2) [self selfTestMonitorPressPoints:nil];
             else if (mode == 3) [self selfTestMonitorNudgeWalk:nil];
+            else if (mode == 4) [self selfTestMonitorGrid:nil];
             else [self selfTestMonitorDrag:nil];
         });
     }
@@ -1752,6 +1810,17 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
     [self addSubmenuTo:mon title:@"摆到（不用按住拖）"
                   menu:(_monitorCornerMenu = [self cornerMenuForTitle:@"摆到"
                                                               action:@selector(moveMonitorToCorner:)])];
+    {   // 四角只能贴边；要到屏幕中间或半个为位置，用九宫格一次到位
+        NSMenu *grid = [[NSMenu alloc] initWithTitle:@"九宫格"];
+        static const char *gn[9] = { "左上", "上中", "右上", "左中", "正中", "右中", "左下", "下中", "右下" };
+        for (int i = 0; i < 9; i++) {
+            NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:[NSString stringWithUTF8String:gn[i]]
+                                                        action:@selector(placeMonitorAtCell:) keyEquivalent:@""];
+            it.tag = i;
+            [grid addItem:it];
+        }
+        [self addSubmenuTo:mon title:@"九宫格摆位（不用按住拖）" menu:grid];
+    }
     {   // 摆到只能贴四个角，微调才能放到任意位置：拖不动时这条是完整出路
         NSMenu *nudge = [[NSMenu alloc] initWithTitle:@"微调"];
         static const char *nn[4] = { "左移 20pt", "右移 20pt", "上移 20pt", "下移 20pt" };

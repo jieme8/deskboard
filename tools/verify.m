@@ -1478,6 +1478,23 @@ int main(int argc, const char *argv[]) {
             Say([src rangeOfString:@"双击看原生活动监视器"].location != NSNotFound,
                 @"气泡里那条入口提示还在");
         }
+        {
+            // 存档夹边：只保证整块留在可视区，下限必须是 0。
+            // 这条钉的是"拖不动"的真凶回归 —— 把下限改回 16，第一条立刻变红。
+            NSRect vf2 = NSMakeRect(0, 0, 1512, 921);
+            NSSize card = NSMakeSize(432, 294);
+            DeskPlace p = DeskPlaceClamp((DeskPlace){ .corner = 1, .dx = -14, .dy = -14 }, card, vf2);
+            Say(p.dx == 0 && p.dy == 0,
+                @"贴边拖过头 → 夹到 0，不是 16（16 就是重申时弹回原位的真凶）：dx=%.0f dy=%.0f",
+                p.dx, p.dy);
+            DeskPlace q = DeskPlaceClamp((DeskPlace){ .corner = 1, .dx = 5000, .dy = 5000 }, card, vf2);
+            Say(q.dx == vf2.size.width - card.width && q.dy == vf2.size.height - card.height,
+                @"拖出另一侧 → 夹到整块刚好留在可视区内：dx=%.0f dy=%.0f", q.dx, q.dy);
+            DeskPlace r = DeskPlaceClamp((DeskPlace){ .corner = 9, .dx = 40, .dy = 40 }, card, vf2);
+            Say(r.corner == 1 && r.dx == 40 && r.dy == 40,
+                @"角位越界被收敛，未越界的 dx/dy 原样保留：corner=%ld dx=%.0f dy=%.0f",
+                (long)r.corner, r.dx, r.dy);
+        }
 
         printf("\n%d 项通过，%d 项失败\n", gPass, gFail);
         return gFail == 0 ? 0 : 1;

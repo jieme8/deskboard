@@ -7,8 +7,16 @@ static const NSUInteger kMaxPlaces = 12;
     NSMutableDictionary<NSString *, NSDictionary *> *_pending;
 }
 
-+ (DeskPlace)defaultPlace {
-    DeskPlace p = { 2, 12.0, 12.0 };   // 左下角：实测壁纸那里最安静
+DeskPlace DeskPlaceClamp(DeskPlace p, NSSize card, NSRect vf) {
+    p.corner &= 3;
+    CGFloat maxDx = MAX(0, vf.size.width - card.width);
+    CGFloat maxDy = MAX(0, vf.size.height - card.height);
+    p.dx = MIN(MAX(p.dx, 0), maxDx);
+    p.dy = MIN(MAX(p.dy, 0), maxDy);
+    return p;
+}
+
++ (DeskPlace)defaultPlace {    DeskPlace p = { 2, 12.0, 12.0 };   // 左下角：实测壁纸那里最安静
     return p;
 }
 

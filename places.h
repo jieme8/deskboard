@@ -9,6 +9,11 @@ typedef struct {
     CGFloat dx, dy;     // 距锚点角两条边的距离
 } DeskPlace;
 
+// 存档里的 dx/dy 只保证"整块仍留在可视区内"：下限必须是 0，不能留边距。
+// 曾经夹在 [16, …] —— 往边上拖过头的那一次会被夹回 16，而「屏幕参数变更 → 重申位置」
+// 隔几十秒就来一次，于是拖完自己弹回原位（"拖不动"的真凶）。抽成纯函数是为了让门直接测它。
+DeskPlace DeskPlaceClamp(DeskPlace p, NSSize card, NSRect visibleFrame);
+
 @interface DeskPlaceStore : NSObject
 + (DeskPlace)defaultPlace;
 // 键格式："<displayID>-<宽>x<高>"，抽成类方法是为了让断言直接测它

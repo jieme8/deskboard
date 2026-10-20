@@ -1336,14 +1336,9 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
              + (NSMidX(f) > vf.origin.x + vf.size.width / 2.0 ? 1 : 0);
     p.dx = MAX(0, (p.corner == 1 || p.corner == 3) ? NSMaxX(vf) - NSMaxX(f) : f.origin.x - vf.origin.x);
     p.dy = MAX(0, (p.corner >= 2) ? f.origin.y - vf.origin.y : NSMaxY(vf) - NSMaxY(f));
-    // 下限必须是 0。原来夹在 [16, …]：往边上拖过头的那一次会被夹回 16，而"屏幕参数变更 →
-    // 只重申位置"在这台机器上每几十秒就来一次，于是拖完自己弹回原位。活体自检实测：
-    // 右上(超边距)+30,+30 → 重申后 +0,+0 被拉回；边距内的三个方向 → 守住。
-    // 现在只保证整块留在可视区内 —— 用户拖到哪就停在哪，贴在边上也算他要的位置。
-    CGFloat maxDx = MAX(0, vf.size.width - kMonitorViewWidth);
-    CGFloat maxDy = MAX(0, vf.size.height - kMonitorViewHeight);
-    p.dx = MIN(MAX(p.dx, 0), maxDx);
-    p.dy = MIN(MAX(p.dy, 0), maxDy);
+    // 夹边只保证整块仍在可视区内（下限 0）。以前下限是 16：组件本来就贴在 dx=dy=16，
+    // 往边上拖过头的那次被夹回 16，隔几十秒的「屏幕参数变更 → 重申位置」就把它搬回原位。
+    p = DeskPlaceClamp(p, mcard, vf);
     if (NSIntersectsRect(f, vf)) {
         NSString *key = [_monitorPlaces keyForScreen:screen];
         [_monitorPlaces setPlace:p forKey:key];

@@ -1070,6 +1070,61 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
 // （mouseDown → mouseDragged → dragWindowToMouse → 夹边 → onUserMove 落档 → 重申）。
 // 它不依赖真鼠标，也不受遮挡影响（点的是菜单栏），所以组件被别的窗口压住时照样能出结论：
 // 位移没到手 = 代码链本身还有 bug；位移到手且重申后守住 = 剩下的只可能是真事件没送进来。
+// 按点扫描：把"按住哪里起得了拖"量成事实。用户报的是"没法拖拉"，如果他按的正好是一块不起拖
+// 的区域（榜头、行文字、右边缘、四角留白），那和事件投递、存档夹边都无关 —— 是命中区的问题，
+// 只能扫出来。每点都走生产路径：mouseDown → 看起没起拖 → 搬 10pt → mouseUp → 看窗口动没动。
+- (void)selfTestMonitorPressPoints:(id)sender {
+    NSWindow *w = _monitorWindows.firstObject;
+    NSView *cv = w.contentView;
+    if (![cv isKindOfClass:[DeskMonitorView class]]) {
+        DeskLog(@"自检：没有可测的活动监视器窗口");
+        return;
+    }
+    DeskMonitorView *mv = (DeskMonitorView *)cv;
+    NSRect f0 = w.frame, b = [mv bounds];
+    DeskPlace before = [_monitorPlaces placeForScreen:(w.screen ?: [NSScreen mainScreen])];
+    struct { const char *where; CGFloat fx, fy; } pts[] = {
+        { "榜头左", 0.06f, 0.94f }, { "榜头中", 0.50f, 0.94f }, { "榜头右", 0.94f, 0.94f },
+        { "CPU标题行", 0.20f, 0.80f }, { "内存标题行", 0.72f, 0.80f },
+        { "第一行名字上", 0.18f, 0.68f }, { "第一行数值上", 0.44f, 0.68f },
+        { "能耗行上", 0.18f, 0.34f }, { "网络行上", 0.72f, 0.34f },
+        { "最左留白", 0.01f, 0.50f }, { "最右留白", 0.99f, 0.50f },
+        { "左上角", 0.02f, 0.98f }, { "右下角", 0.98f, 0.02f }, { "底部中", 0.50f, 0.02f },
+    };
+    NSTimeInterval ts = [NSDate date].timeIntervalSince1970;
+    void (^savedLog)(NSString *) = [mv.onLog copy];
+    mv.onLog = ^(NSString *line) { (void)line; };   // 别把「按下」计数灌进真人信号里
+    int dead = 0;
+    for (size_t i = 0; i < sizeof(pts) / sizeof(pts[0]); i++) {
+        NSPoint p = NSMakePoint(NSMinX(b) + NSWidth(b) * pts[i].fx,
+                                NSMinY(b) + NSHeight(b) * pts[i].fy);
+        NSEvent *down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:p modifierFlags:0
+                                           timestamp:ts windowNumber:w.windowNumber context:nil
+                                         eventNumber:241 clickCount:1 pressure:1.0];
+        NSEvent *up = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp location:p modifierFlags:0
+                                        timestamp:ts windowNumber:w.windowNumber context:nil
+                                     eventNumber:243 clickCount:1 pressure:0.0];
+        NSPoint c = NSEvent.mouseLocation;
+        [mv mouseDown:down];
+        BOOL started = [mv isDragging];
+        [mv dragWindowToMouse:NSMakePoint(c.x + 10, c.y + 10)];
+        [mv mouseUp:up];
+        NSRect f1 = w.frame;
+        BOOL moved = hypot(f1.origin.x - f0.origin.x, f1.origin.y - f0.origin.y) > 0.5;
+        if (!started || !moved) dead++;
+        DeskLog(@"自检 按点 %@（视图坐标 %.0f,%.0f）：起拖=%d 搬窗=%d",
+                [NSString stringWithUTF8String:pts[i].where], p.x, p.y, started, moved);
+        [w setFrameOrigin:f0.origin];
+        [self applyMonitorFrames];
+    }
+    mv.onLog = savedLog;
+    NSScreen *scr = w.screen ?: [NSScreen mainScreen];
+    [_monitorPlaces setPlace:before forKey:[_monitorPlaces keyForScreen:scr]];
+    [self saveConfig];
+    [self applyMonitorFrames];
+    DeskLog(@"自检 按点扫描：%zu 个点里 %d 个是死区", sizeof(pts) / sizeof(pts[0]), dead);
+}
+
 - (void)selfTestMonitorDrag:(id)sender {
     NSWindow *w = _monitorWindows.firstObject;
     NSView *cv = w.contentView;
@@ -1196,10 +1251,15 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
                                                          userInfo:nil repeats:YES];
     [[NSRunLoop mainRunLoop] addTimer:_monitorSampleTimer forMode:NSRunLoopCommonModes];
     [self refreshMonitor:nil];
-    if (getenv("DESKBOARD_SELFTEST")) {
-        // 我这边没有真鼠标、也没有辅助功能权限：带这个环境变量启动，自检自己跑一遍
+    const char *st = getenv("DESKBOARD_SELFTEST");
+    if (st) {
+        // 我这边没有真鼠标、也没有辅助功能权限：带这个环境变量启动，自检自己跑一遍。
+        // =2 跑按点扫描（哪些位置按下去起不了拖），其余值跑方向七发。
+        BOOL sweep = st[0] == '2';
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{ [self selfTestMonitorDrag:nil]; });
+                       dispatch_get_main_queue(), ^{
+            if (sweep) [self selfTestMonitorPressPoints:nil]; else [self selfTestMonitorDrag:nil];
+        });
     }
 }
 

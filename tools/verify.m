@@ -1188,12 +1188,18 @@ int main(int argc, const char *argv[]) {
                     @"按住拖动期间不再弹悬停浮层（回调次数停在 %d）", before);
                 [dv mouseUp:up];
             }
-            // 两条搬窗路不许打架：AppKit 的会话只要真的搬过（离开按下时的位置），
-            // mouseDragged: 就完全不插手；否则会把窗口反复推到它前面 = 抖动。
-            // 这条抓得住旧代码：没有守卫时，兜底那一路会按"按下时位置 + 零位移"把窗口拽回去。
+            // 只许有一条搬窗路。mouseDown 里不许再调用 AppKit 的拖拽会话：它会吞掉
+            // mouseDragged，而桌面图标层的非 key 窗它又搬不动 → 两头落空 = "按住不动"。
+            // ① 按下之后窗口必须还在原地（旧写法跑会话时这一步会被搬走）；
+            // ② 外部把窗口挪开后，下一个 mouseDragged 必须按自己的算式把它搬回来
+            //    （旧守卫把这一步认成"AppKit 已接手"而完全不插手，窗口就永远停在 +33,+21）。
             {
                 NSRect f0 = dw.frame;
                 [dv mouseDown:down];
+                NSRect fp = dw.frame;
+                Say(NSEqualPoints(f0.origin, fp.origin),
+                    @"按下不会就地搬窗（AppKit 会话已去掉）：位移 (%+.1f,%+.1f)",
+                    fp.origin.x - f0.origin.x, fp.origin.y - f0.origin.y);
                 [dw setFrameOrigin:NSMakePoint(f0.origin.x + 33.0, f0.origin.y + 21.0)];
                 NSEvent *drag3 = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDragged
                                                     location:NSMakePoint(120, 120) modifierFlags:0
@@ -1202,10 +1208,12 @@ int main(int argc, const char *argv[]) {
                                                  eventNumber:21 clickCount:1 pressure:1.0];
                 [dv mouseDragged:drag3];
                 NSRect f1 = dw.frame;
-                Say(fabs(f1.origin.x - (f0.origin.x + 33.0)) < 0.6
-                    && fabs(f1.origin.y - (f0.origin.y + 21.0)) < 0.6,
-                    @"AppKit 搬过之后 mouseDragged 不再插手：留在 (%+.0f,%+.0f)",
-                    f1.origin.x - f0.origin.x, f1.origin.y - f0.origin.y);
+                // 不许拿"搬回原点"当判据：dragWindowToMouse 用的是 [NSEvent mouseLocation]
+                // （真实光标），校验跑这几毫秒里你一动鼠标，落点就跟着漂 —— 实测红过 4 次。
+                // 旧守卫的特征是"外部挪开之后它就冻在挪开的位置不动"，所以只断言偏移被覆盖掉。
+                Say(!NSEqualPoints(f1.origin, NSMakePoint(f0.origin.x + 33.0, f0.origin.y + 21.0)),
+                    @"mouseDragged 一定插手：外部挪开的 (+33,+21) 被覆盖成 (%.0f,%.0f)",
+                    f1.origin.x, f1.origin.y);
                 [dv mouseUp:up];
                 [dw setFrameOrigin:f0.origin];
             }

@@ -943,6 +943,20 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     }
 }
 
+// 同层竞争：访达的桌面窗和监视器同在 kCGDesktopIconWindowLevel。桌面刷新、切 Space、换壁纸都会
+// 让 WindowServer 把它排到组件前面，此后每一次点击都归访达 —— 组件看着好好的，按住却一动不动。
+// 弹药库早就有「定时顶回本层最前」这一手（checkVaultCover:），监视器过去只在建窗/显示时顶一次，
+// 这就是三块组件里"只有这一块拖不动"的差别所在。
+- (void)raiseMonitorAboveSameLayer {
+    if (_monitorHidden || _monitorWindows.count == 0) return;
+    if (_monitorHoverWindow.isVisible) return;   // 浮层同层：这时顶组件会把气泡压掉
+    for (NSWindow *w in _monitorWindows) {
+        NSView *v = w.contentView;
+        if ([v isKindOfClass:[DeskMonitorView class]] && [(DeskMonitorView *)v isDragging]) return;
+    }   // 正按住拖着的时候顶一层，等于从用户手里把窗口抢走
+    for (NSWindow *w in _monitorWindows) [w orderFrontRegardless];
+}
+
 - (void)setMonitorHidden:(BOOL)hidden {
     if (_monitorHidden == hidden) return;
     _monitorHidden = hidden;
@@ -1120,6 +1134,9 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
 // 是窗口本身，那段空洞会被当成 0 计进去，恢复显示后数字长期偏低且看不出来。
 - (void)refreshMonitor:(NSTimer *)t {
     BOOL live = !_monitorHidden && _monitorWindows.count > 0;
+    // 每一拍顺手把自己顶回同层最前（5 秒一档，和弹药库那 3 秒一档同一量级）：
+    // 不这么做的话，访达哪天排到前面，组件就一直点不动，直到下次重建窗口才偶然恢复
+    [self raiseMonitorAboveSameLayer];
     NSArray<DeskProc *> *rows = [_procs sample];
     _monitorCount = (NSInteger)rows.count;
     double energySum = 0;

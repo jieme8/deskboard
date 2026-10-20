@@ -106,6 +106,18 @@ DESKBOARD_SELFTEST=1 /Users/hujie/Applications/DeskBoard.app/Contents/MacOS/Desk
 存档下限改成 0（只保证整块留在可视区）之后四个方向全守住。副作用：组件可以贴边停放；
 「摆到四角」仍沿用现有 dx/dy 档位，不受影响。
 
+**核对读数别用区域截图**：组件被普通层窗口压住时，`screencapture -R` 拍到的是压它的那个窗口。
+逐窗抓才看得见组件本体 —— `probe_clickcatcher 监视器` 现在会顺手打窗口号：
+
+```bash
+id=$(./build/tools/probe_clickcatcher 监视器 | grep -o "窗口号 [0-9]*" | grep -o "[0-9]*")
+screencapture -o -x -l$id /tmp/w.png        # 绕过一切遮挡，拿到组件自己的像素
+```
+
+坑：逐窗抓出来带 alpha（非透明窗），近白的数值叠在白底上会"看不见"，看着像渲染缺陷 —— 那是
+合成的假象。要按代码里量过的壁纸亮度（监视器底下 p95=44）把图 alpha 合成到暗底上再看，
+实测数值区对比 5.3 倍（底 46 / 字 248），是清楚的。
+
 **先查遮挡，再改代码** —— 三块组件都在 `kCGDesktopIconWindowLevel`（桌面图标层），
 任何一个全屏窗口（远程桌面、投屏、某些截图/会议软件的覆盖层）压在它上面时，鼠标事件
 根本送不到组件，这时候改拖拽代码是白改。一条命令就能分清：

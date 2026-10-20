@@ -20,8 +20,14 @@ static long long LayerOf(CFDictionaryRef d) {
 }
 
 static void Scan(CFArrayRef a, CFIndex n, NSInteger mine, CGRect target) {
-    printf("目标 bounds=(%.0f, %.0f, %.0fx%.0f)，在全局前到后序列里排第 %ld\n",
-           target.origin.x, target.origin.y, target.size.width, target.size.height, (long)mine);
+    // 顺手把窗口号打出来：`screencapture -o -x -l<号>` 能逐窗抓像素、绕开所有遮挡，
+    // 不然组件被普通层窗口压住时连"它到底长什么样"都没法核对。
+    CFDictionaryRef self_ = CFArrayGetValueAtIndex(a, mine);
+    int wid = (int)[(__bridge NSNumber *)CFDictionaryGetValue(self_, kCGWindowNumber) integerValue];
+    printf("目标 bounds=(%.0f, %.0f, %.0fx%.0f)，在全局前到后序列里排第 %ld，窗口号 %d"
+           "（逐窗抓：screencapture -o -x -l%d /tmp/w.png）\n",
+           target.origin.x, target.origin.y, target.size.width, target.size.height,
+           (long)mine, wid, wid);
     int hits = 0, eaters = 0; double worst = 0;
     for (CFIndex i = 0; i < mine; i++) {     // 只看在它前面的
         CFDictionaryRef d = CFArrayGetValueAtIndex(a, i);

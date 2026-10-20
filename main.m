@@ -1125,6 +1125,40 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     DeskLog(@"自检 按点扫描：%zu 个点里 %d 个是死区", sizeof(pts) / sizeof(pts[0]), dead);
 }
 
+// 用户已选定「被压住时靠菜单摆位」，那这条替代路径本身就得可靠：微调每次 20pt，
+// 连点几十次会跨过屏幕中线、让存档 corner 从右上翻成左上/左下，换边算式一错就会跳位。
+// 这里按左 N 次 + 上 M 次走一遍，核对实际位移和期望位移对不对、重申后守不守得住。
+- (void)selfTestMonitorNudgeWalk:(id)sender {
+    NSWindow *w = _monitorWindows.firstObject;
+    if (!w) { DeskLog(@"自检：没有可测的活动监视器窗口"); return; }
+    NSRect f0 = w.frame;
+    DeskPlace before = [_monitorPlaces placeForScreen:(w.screen ?: [NSScreen mainScreen])];
+    NSInteger left = 12, up = 6;             // 期望：左 240pt、上 120pt
+    for (NSInteger i = 0; i < left; i++) {
+        NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:@"" action:NULL keyEquivalent:@""];
+        it.tag = 0;                          // nudgeMonitor: 的 0 = 左移 20pt
+        [self nudgeMonitor:it];
+    }
+    for (NSInteger i = 0; i < up; i++) {
+        NSMenuItem *it = [[NSMenuItem alloc] initWithTitle:@"" action:NULL keyEquivalent:@""];
+        it.tag = 2;                          // 2 = 上移 20pt（Cocoa y 朝上）
+        [self nudgeMonitor:it];
+    }
+    NSRect f1 = w.frame;
+    [self applyMonitorFrames];               // 重申一次，看守不守得住
+    NSRect f2 = w.frame;
+    DeskLog(@"自检 微调走位：期望(%+ld,%+ld) 走成(%+.0f,%+.0f) 重申后(%+.0f,%+.0f) %@",
+            (long)(-left * 20), (long)(up * 20),
+            f1.origin.x - f0.origin.x, f1.origin.y - f0.origin.y,
+            f2.origin.x - f0.origin.x, f2.origin.y - f0.origin.y,
+            (fabs(f2.origin.x - f1.origin.x) < 0.5 && fabs(f2.origin.y - f1.origin.y) < 0.5)
+                ? @"守住" : @"重申后跳位");
+    NSScreen *scr = w.screen ?: [NSScreen mainScreen];
+    [_monitorPlaces setPlace:before forKey:[_monitorPlaces keyForScreen:scr]];
+    [self applyMonitorFrames];
+    [self saveConfig];
+}
+
 - (void)selfTestMonitorDrag:(id)sender {
     NSWindow *w = _monitorWindows.firstObject;
     NSView *cv = w.contentView;
@@ -1254,11 +1288,14 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     const char *st = getenv("DESKBOARD_SELFTEST");
     if (st) {
         // 我这边没有真鼠标、也没有辅助功能权限：带这个环境变量启动，自检自己跑一遍。
-        // =2 跑按点扫描（哪些位置按下去起不了拖），其余值跑方向七发。
-        BOOL sweep = st[0] == '2';
+        // =2 按点扫描（哪些位置起不了拖），=3 微调走位（菜单摆位这条替代路径守不守得住），
+        // 其余值跑方向七发。我这边没有真鼠标、也没有辅助功能权限，所以让自检自己跑。
+        NSInteger mode = atoi(st);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
-            if (sweep) [self selfTestMonitorPressPoints:nil]; else [self selfTestMonitorDrag:nil];
+            if (mode == 2) [self selfTestMonitorPressPoints:nil];
+            else if (mode == 3) [self selfTestMonitorNudgeWalk:nil];
+            else [self selfTestMonitorDrag:nil];
         });
     }
 }

@@ -1097,6 +1097,11 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
                                       { -400, 0 }, { 0, -400 }, { -400, -400 } };
     static const char *name[] = { "右上(超边距)", "左下(边距内)", "右上(边距内)", "正下 60",
                                   "跨横中线 左400", "跨纵中线 下400", "跨两线 左下400" };
+    // 自检灌的是真 mouseDown/mouseUp，视图自己会打「按下」「松手」——那正是
+    // tools/diagnose_drag.py 数的那几条，一次自检就把真人信号冲掉（实测按下从 0 变 37）。
+    // 所以合成事件期间把这块视图的日志静音，自检的结论由下面自己的 DeskLog 出。
+    void (^savedLog)(NSString *) = [mv.onLog copy];
+    mv.onLog = ^(NSString *line) { (void)line; };   // 属性是 nonnull，不能直接塞 nil
     for (size_t i = 0; i < sizeof(off) / sizeof(off[0]); i++) {
         NSPoint c = NSEvent.mouseLocation;
         [mv mouseDown:down];
@@ -1120,6 +1125,7 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
         [w setFrameOrigin:f0.origin];    // 每一发都先复原，别让上一发的落档污染下一发
         [self applyMonitorFrames];
     }
+    mv.onLog = savedLog;
     // 自检不许动用户的存档：每一发的落档都会改写档位，跑完必须还原成进来时的样子
     NSScreen *scr = w.screen ?: [NSScreen mainScreen];
     [_monitorPlaces setPlace:before forKey:[_monitorPlaces keyForScreen:scr]];

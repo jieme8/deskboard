@@ -1382,10 +1382,13 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
                 // 临时把组件抬到普通窗口之上 N 秒，让外部可以投真 HID 事件做端到端拖动验证；
                 // 到点自动还原到桌面图标层。用户选的是"被压住靠菜单"，这是验证手段、不是产品行为。
                 NSWindow *mw = _monitorWindows.firstObject;
-                DeskLog(@"自检 临时提层：%ld → %ld，20 秒后还原",
-                        (long)mw.level, (long)NSStatusWindowLevel);
+                const char *secs = getenv("DESKBOARD_RAISE_SECS");
+                double hold = secs ? atof(secs) : 20.0;
+                if (hold < 5) hold = 5;
+                DeskLog(@"自检 临时提层：%ld → %ld，%.0f 秒后还原",
+                        (long)mw.level, (long)NSStatusWindowLevel, hold);
                 for (NSWindow *x in _monitorWindows) x.level = NSStatusWindowLevel;
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20.0 * NSEC_PER_SEC)),
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(hold * NSEC_PER_SEC)),
                                dispatch_get_main_queue(), ^{
                     for (NSWindow *x in self->_monitorWindows) x.level = kCGDesktopIconWindowLevel;
                     for (NSWindow *x in self->_monitorWindows) [x orderFrontRegardless];

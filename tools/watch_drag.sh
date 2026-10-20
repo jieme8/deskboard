@@ -1,14 +1,28 @@
 #!/bin/zsh
-# 等一次真人拖动，然后当场给出链路结论。用法：tools/watch_drag.sh [最多等几分钟]
-# 前提：组件此刻没被普通层窗口压住（脚本会先自检这一条）。
+# 等一次真人拖动，然后当场给出链路结论。
+#   tools/watch_drag.sh            # 组件露着时用：先自检遮挡，再盯日志等一次拖动
+#   tools/watch_drag.sh --raise    # 被别的窗口压着时用：先把组件临时抬到最前 120 秒，
+#                                  # 你在这段时间里直接拖它；到点自动落回桌面层（不改产品行为）
 cd "$(dirname "$0")/.." || exit 1
 L=~/Library/Logs/DeskBoard.log
-mins=${1:-10}
+APP=/Users/hujie/Applications/DeskBoard.app/Contents/MacOS/DeskBoard
+mins=10
 
-if ./build/tools/probe_clickcatcher 监视器 2>&1 | grep -q "真吃点击"; then
-    echo "✗ 组件现在被别的窗口整个压住，点不到。先把压着它的窗口挪开（脚本会告诉你是谁）："
-    ./build/tools/probe_clickcatcher 监视器 2>&1 | grep "layer=0" | head -3
-    exit 2
+if [ "$1" = "--raise" ]; then
+    echo "把组件临时抬到所有窗口之上 120 秒（仅本次进程；到点自动落回桌面层）…"
+    pkill -f "$APP" 2>/dev/null
+    sleep 1
+    DESKBOARD_SELFTEST=6 DESKBOARD_RAISE_SECS=120 "$APP" >/dev/null 2>&1 &
+    sleep 4
+    mins=2   # 抬起的 120 秒够拖，确认完就不必再等
+else
+    if ./build/tools/probe_clickcatcher 监视器 2>&1 | grep -q "真吃点击"; then
+        echo "✗ 组件现在被别的窗口整个压住，点不到。二选一："
+        echo "  · 把压着它的窗口挪开（就是下面这个）："
+        ./build/tools/probe_clickcatcher 监视器 2>&1 | grep "layer=0" | head -3
+        echo "  · 或者直接：tools/watch_drag.sh --raise"
+        exit 2
+    fi
 fi
 
 base=$(grep -n "进程启动" "$L" | tail -1 | cut -d: -f1)

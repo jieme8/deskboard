@@ -868,6 +868,13 @@ int main(int argc, const char *argv[]) {
             Say([na hasPrefix:@"共"] && got >= 20.2,
                 @"网络榜头「%@」与每行同量纲，且 ≥ 榜内最大行", na);
             Say(got == want, @"榜头 %ld == 全部进程 socket 之和 %ld", (long)got, (long)want);
+            // 网络那几个数必须带单位：用户原话是"网络连接这个 59 5432 看不懂什么意思"，
+            // 光秃秃的数字既不知道是连接数还是进程数，也不知道榜头和行内是不是一回事。
+            Say([na hasSuffix:@"条连接"], @"网络榜头「%@」写明单位是「条连接」", na);
+            NSString *netRow = [mv valueTextFor:sc[0] metric:DeskMonitorMetricNetwork];
+            Say([netRow hasSuffix:@"条"], @"网络每行「%@」也带「条」", netRow);
+            Say([netRow doubleValue] <= (double)got, @"网络榜头 %ld ≥ 榜内最大行 %.0f（同一把尺：连接数）",
+                (long)got, [netRow doubleValue]);
             // 榜内每行也得自带单位、而且和榜头同一把尺：CPU 行印的是占整机的百分比
             // （单核百分点 ÷ 核数），这样"总数 ≤ 100%"在每一行都成立
             NSString *cpuRow = cpuRow0;
@@ -875,6 +882,37 @@ int main(int argc, const char *argv[]) {
             Say(fabs(row0 - 20.2 / (double)cores) <= 0.06,
                 @"CPU 每行「%@」= 单核 20.2 ÷ %ld 核 = 占整机 %.2f%%", cpuRow, (long)cores, 20.2 / (double)cores);
             Say(row0 <= 100.0, @"CPU 每行也不会超过 100%%（占整机，满值 100%%）");
+            // 悬停浮层的摆位：三条规矩各有断言
+            // ① 放在鼠标左边（不挡光标）；② 左边放不下才改放右边；
+            // ③ 整块落在 visibleFrame 里 —— 菜单栏不在 visibleFrame 内，所以它压不到菜单栏。
+            //    之前是拿行矩形换算的：行矩形已被 convertRect:toView:nil 转成窗口坐标（下原点），
+            //    代码又按视图坐标（上原点）减了一次，y 轴倒了两次，位置跑到屏幕顶边外，
+            //    macOS 只能把窗夹回屏幕顶端 —— 浮层于是压在菜单栏上（用户报的就是这个）。
+            {
+                NSRect screen = NSMakeRect(0, 0, 1512, 945);
+                NSRect vf = NSMakeRect(0, 90, 1512, 825);   // visibleFrame：上沿不含菜单栏
+                NSSize bs = NSMakeSize(240, 150);
+                NSPoint mid = NSMakePoint(900, 500);
+                NSRect r = DeskHoverBubbleRect(mid, bs, vf);
+                Say(NSMaxX(r) <= mid.x, @"浮层在鼠标左边：右边 %.0f ≤ 鼠标 x %.0f",
+                    NSMaxX(r), mid.x);
+                Say(NSMaxY(r) <= NSMaxY(vf), @"浮层不越过可视区上沿（%.0f ≤ %.0f），压不到菜单栏",
+                    NSMaxY(r), NSMaxY(vf));
+                Say(NSMinY(r) >= NSMinY(vf) && NSMinX(r) >= NSMinX(vf) && NSMaxX(r) <= NSMaxX(vf),
+                    @"浮层整块落在可视区里 (%.0f,%.0f %.0fx%.0f)", r.origin.x, r.origin.y,
+                    r.size.width, r.size.height);
+                // 鼠标贴着屏幕左边缘时，左边放不下 → 必须改放右边，不能跑到屏幕外
+                NSPoint edge = NSMakePoint(30, 500);
+                NSRect r2 = DeskHoverBubbleRect(edge, bs, vf);
+                Say(NSMinX(r2) >= NSMinX(vf) && NSMaxX(r2) <= NSMaxX(vf),
+                    @"鼠标在屏幕左边缘时浮层仍留在可视区内 (x=%.0f)", NSMinX(r2));
+                // 鼠标贴着顶部时，浮层整体下移，不越到菜单栏上
+                NSPoint top = NSMakePoint(900, NSMaxY(vf) - 10);
+                NSRect r3 = DeskHoverBubbleRect(top, bs, vf);
+                Say(NSMaxY(r3) <= NSMaxY(vf) && NSMinY(r3) >= NSMinY(vf),
+                    @"鼠标在可视区顶端时浮层被压回区内 (y=%.0f 高 %.0f)", NSMinY(r3), r3.size.height);
+                (void)screen;
+            }
             // 能耗每行原来就是那个 "191" —— 自造单位的裸分。现在是占比，且分母和榜头同一个
             NSString *enRow = [mv valueTextFor:sc[0] metric:DeskMonitorMetricEnergy];
             Say([enRow hasSuffix:@"%"] && [enRow doubleValue] <= 100.0,

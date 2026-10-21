@@ -123,4 +123,13 @@ typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
 - (NSString *)historyText;
 @end
 
+// 悬停浮层该摆哪：纯函数，鼠标在 mouse、浮层 size、可用区 visibleFrame。
+// 规矩三条：① 放在鼠标**左边**（不挡光标）；② 左边放不下才改放右边；
+// ③ 整块必须落在 visibleFrame 里 —— 用 visibleFrame 而不是 frame，
+// 菜单栏和程序坞本来就不在 visibleFrame 里，所以它绝不会压到菜单栏上。
+// 之前那段是拿行矩形换算的，而行矩形已经被 convertRect:toView:nil 转成窗口坐标（下原点），
+// 代码又按视图坐标（上原点）减了一次，y 轴倒了两次，位置跑到屏幕顶边外，
+// macOS 只能把窗夹回屏幕顶端 —— 于是浮层压在菜单栏上（用户报的就是这个）。
+NSRect DeskHoverBubbleRect(NSPoint mouse, NSSize size, NSRect visibleFrame);
+
 NS_ASSUME_NONNULL_END

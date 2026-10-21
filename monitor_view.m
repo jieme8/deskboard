@@ -554,7 +554,9 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
             // 原来是系统总速率（48K/s）配一堆连接数（5、4、4）—— 榜头是"速率"、每行是"个数"，
             // 和单位换算那条是同一个毛病，只是还没被人撞上。改成同量纲的总数。
             if (_totalSockets <= 0) return @"—";
-            return [NSString stringWithFormat:@"共 %ld 个", (long)_totalSockets];
+            // 单位必须写出来：光"共 59 个"没人知道数的是什么（用户原话：
+            // "网络连接这个 59 5432 看不懂什么意思"）。59 = 全部可读进程的连接数合计。
+            return [NSString stringWithFormat:@"共 %ld 条连接", (long)_totalSockets];
     }
 }
 
@@ -696,7 +698,8 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         // 榜头"前4占 xx%"用的同一个 _energyTotal（同一次循环算的，不留第二套真相）。
         case DeskMonitorMetricEnergy: return [NSString stringWithFormat:@"%.0f%%",
                                               MonShare(p.energy, _energyTotal)];
-        default: return [NSString stringWithFormat:@"%ld", (long)p.sockets];
+        // 行内也带单位："5" 看不出是连接数、进程数还是别的
+        default: return [NSString stringWithFormat:@"%ld 条", (long)p.sockets];
     }
 }
 
@@ -1126,7 +1129,7 @@ static NSString *MonHistText(NSInteger metric, double avg, double covered, doubl
             // 分母没喂进来就宁可空着：印个 "12h 0%" 是假数据，比不印更糟
             if (energyTotal <= 0) return nil;
             return [NSString stringWithFormat:@"12h %.0f%%", MonShare(avg, energyTotal)];
-        case DeskMonitorMetricNetwork: return [NSString stringWithFormat:@"12h %.0f 个", avg];
+        case DeskMonitorMetricNetwork: return [NSString stringWithFormat:@"12h %.0f 条", avg];
         default: return nil;
     }
 }
@@ -1158,7 +1161,7 @@ static NSString *MonHistText(NSInteger metric, double avg, double covered, doubl
         // 能耗的分母是"全部进程的能耗合计"，气泡里也写出来（榜头已经写了"占全部"）
         { @"能耗（占全部）", _energy, DeskMonitorMetricEnergy, self.energyTotal > 0
             ? [NSString stringWithFormat:@"%.0f%%", MonShare(_energy, self.energyTotal)] : @"—" },
-        { @"网络·连接", (double)_sockets, DeskMonitorMetricNetwork, [NSString stringWithFormat:@"%ld", (long)_sockets] },
+        { @"网络·连接", (double)_sockets, DeskMonitorMetricNetwork, [NSString stringWithFormat:@"%ld 条", (long)_sockets] },
     };
     for (int i = 0; i < 4; i++) {
         y += 6.0;
@@ -1191,11 +1194,31 @@ static NSString *MonHistText(NSInteger metric, double avg, double covered, doubl
     [MC(255, 255, 255, 0.10) setStroke];
     [sep stroke];
     y += 6.0;
-    NSString *foot = _histCovered > 0 && _histCovered < kDeskHistoryWindow * 0.98
-        ? [NSString stringWithFormat:@"12h 平均基于已记录的 %.1f 小时 · 双击看原生活动监视器",
-                                      _histCovered / 3600.0]
-        : @"12h 平均 = 过去 12 小时 · 双击看原生活动监视器";
+    // 网络那一栏的数字最容易被问「这数的是什么」（用户原话："网络连接这个 59 5432 看不懂"），
+    // 所以悬停到网络行时，底行改成说清口径：这些是这个进程当前打开中的网络连接。
+    NSString *foot;
+    if (_histMetric == DeskMonitorMetricNetwork) {
+        foot = @"连接=该进程当前打开中的网络连接 · 双击看原生活动监视器";
+    } else {
+        foot = _histCovered > 0 && _histCovered < kDeskHistoryWindow * 0.98
+            ? [NSString stringWithFormat:@"12h 平均基于已记录的 %.1f 小时 · 双击看原生活动监视器",
+                                          _histCovered / 3600.0]
+            : @"12h 平均 = 过去 12 小时 · 双击看原生活动监视器";
+    }
     MonStr(foot, NSMakePoint(x, y), MonText(9.0), MC(255, 255, 255, 0.55), NO);
 }
 
 @end
+
+// 浮层摆位：见 monitor_view.h 里那份约定（纯函数，好断言）
+NSRect DeskHoverBubbleRect(NSPoint mouse, NSSize size, NSRect visibleFrame) {
+    const CGFloat gap = 12.0;
+    CGFloat x = mouse.x - size.width - gap;            // 默认：鼠标左边
+    CGFloat y = mouse.y - size.height / 2.0;           // 与鼠标齐平，不压住被悬停的那一行
+    if (x < NSMinX(visibleFrame)) x = mouse.x + gap;   // 左边放不下就改放右边
+    if (x + size.width > NSMaxX(visibleFrame)) x = NSMaxX(visibleFrame) - size.width;
+    if (x < NSMinX(visibleFrame)) x = NSMinX(visibleFrame);
+    if (y < NSMinY(visibleFrame)) y = NSMinY(visibleFrame);
+    if (y + size.height > NSMaxY(visibleFrame)) y = NSMaxY(visibleFrame) - size.height;
+    return NSMakeRect(round(x), round(y), size.width, size.height);
+}

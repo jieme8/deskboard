@@ -16,8 +16,24 @@ static void Say(BOOL ok, NSString *fmt, ...) {
     if (ok) gPass++; else gFail++;
 }
 
+// 域必须跟 App 一致：App 换了 bundle id 之后配置域就换了，
+// 这里再写死老域的话，读到的是老存档 —— 拿老存档去对 App 现在的窗口位置，
+// 必然对不上（用户挪过组件之后就会报"位置对不上"）。
+static NSString *DeskPrefDomain(void) {
+    static NSString *domain;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSString *plist = [NSHomeDirectory() stringByAppendingPathComponent:
+                           @"Applications/DeskBoard.app/Contents/Info.plist"];
+        NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:plist];
+        id bid = d[@"CFBundleIdentifier"];
+        domain = [bid isKindOfClass:[NSString class]] ? bid : @"com.hujie.deskboard.widget";
+    });
+    return domain;
+}
+
 static id Pref(NSString *key) {
-    CFStringRef domain = CFSTR("com.hujie.deskboard");
+    CFStringRef domain = (__bridge CFStringRef)DeskPrefDomain();
     CFPreferencesAppSynchronize(domain);
     return CFBridgingRelease(CFPreferencesCopyAppValue((__bridge CFStringRef)key, domain));
 }

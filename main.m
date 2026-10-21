@@ -19,7 +19,8 @@
 #import <libproc.h>
 #import <sys/proc_info.h>
 
-static NSString *const kDomain = @"com.hujie.deskboard";
+// 老 bundle id 的配置域。换 id 之后老域里的值要搬过来（见 migrateLegacyDefaults）
+static NSString *const kLegacyDomain = @"com.hujie.deskboard";
 
 static void DeskLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1, 2);
 static void DeskLog(NSString *fmt, ...) {
@@ -333,7 +334,7 @@ static const CGFloat kVaultCoverShare = 0.25;
 // 只看日志会被骗过去。详见 README「菜单栏图标不显示」一节。
 // 换 id 之后配置域会跟着变，所以这里把老域的值原样搬过来一次。
 - (void)migrateLegacyDefaults {
-    NSString *legacy = @"com.hujie.deskboard";
+    NSString *legacy = kLegacyDomain;
     NSString *current = [NSBundle mainBundle].bundleIdentifier;
     if (!current || [current isEqualToString:legacy]) return;
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
@@ -915,7 +916,9 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     if (pid <= 0 || !host) { [_monitorHoverWindow orderOut:nil]; return; }
     DeskProc *p = [_procs procWithPid:pid];
     if (!p) { [_monitorHoverWindow orderOut:nil]; return; }
-    NSSize size = NSMakeSize(214.0, 150.0);
+    // 214 太窄：底部那行「12h 平均基于已记录的 0.7 小时 · 双击看原生活动监视器」
+    // 会被裁掉尾巴（实测截图里就是断在「原生活动监」）。加宽到 240 让它整句放下。
+    NSSize size = NSMakeSize(240.0, 150.0);
     if (!_monitorHoverWindow) {
         _monitorHoverWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, size.width, size.height)
                                                          styleMask:NSWindowStyleMaskBorderless
@@ -943,14 +946,11 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     hv.energyTotal = [cv isKindOfClass:[DeskMonitorView class]] ? ((DeskMonitorView *)cv).energyShareTotal : 0;
     _monitorHoverWindow.contentView = hv;
 
-    NSRect hf = host.frame;
-    // row 是卡片视图坐标（左上原点），窗口是屏幕坐标（左下原点）
-    CGFloat topY = NSMaxY(hf) - NSMinY(row) - NSHeight(row) / 2.0 - size.height * 0.35;
-    CGFloat x = NSMaxX(hf) + 10.0;
+    // 浮层跟着鼠标走、放在鼠标左边、夹在可视区里（摆位规则见 monitor_view.h 的 DeskHoverBubbleRect）
+    NSPoint m = [NSEvent mouseLocation];
     NSScreen *sc = host.screen ?: [NSScreen mainScreen];
-    if (x + size.width > NSMaxX(sc.frame)) x = NSMinX(hf) - size.width - 10.0;
-    [_monitorHoverWindow setFrame:NSMakeRect(round(x), round(topY), size.width, size.height)
-                          display:YES animate:NO];
+    NSRect bubble = DeskHoverBubbleRect(m, size, sc.visibleFrame);
+    [_monitorHoverWindow setFrame:bubble display:YES animate:NO];
     [_monitorHoverWindow orderFrontRegardless];
 }
 

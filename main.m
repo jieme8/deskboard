@@ -226,6 +226,7 @@ static const CGFloat kVaultCoverShare = 0.25;
 
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    [self migrateLegacyDefaults];
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
     _places = [[DeskPlaceStore alloc] initWithDictionary:[ud dictionaryForKey:K(@"Places")]];
     if (_places.count == 0) {
@@ -322,6 +323,42 @@ static const CGFloat kVaultCoverShare = 0.25;
                                                object:nil];
     _screenSig = [self currentScreenSignature];   // 建完窗再记指纹：之后每条"抖动"通知都能认出配置没变
     DeskLog(@"启动完成 屏位档 %lu 隐藏=%d 屏幕指纹=%@", (unsigned long)_places.count, _hidden, _screenSig);
+}
+
+// 一次性迁移：老 bundle id（com.hujie.deskboard）域里的配置，搬到新 id 的域。
+//
+// 为什么要换 id：2026-10-21 实测，同一个 bundle id 在 LaunchServices 里攒了几百条
+// 重复登记（macOS 每发现一份同 id 的新副本，就把旧的自动搬进 ~/.Trash 并留着登记），
+// 系统就认不出「这个菜单栏项属于哪个 App」，于是整个不画 —— 而 isVisible 仍然返回 1，
+// 只看日志会被骗过去。详见 README「菜单栏图标不显示」一节。
+// 换 id 之后配置域会跟着变，所以这里把老域的值原样搬过来一次。
+- (void)migrateLegacyDefaults {
+    NSString *legacy = @"com.hujie.deskboard";
+    NSString *current = [NSBundle mainBundle].bundleIdentifier;
+    if (!current || [current isEqualToString:legacy]) return;
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    if ([ud objectForKey:K(@"Places")] || [ud objectForKey:K(@"MonitorPlaces")]) return;  // 迁过了
+    CFPreferencesAppSynchronize((__bridge CFStringRef)legacy);
+    NSArray<NSString *> *keys = @[K(@"Places"), K(@"MonitorPlaces"), K(@"VaultPlaces"),
+                                  K(@"Style"), K(@"Quad"), K(@"MonitorQuad"), K(@"VaultQuad"),
+                                  K(@"Hidden"), K(@"MonitorHidden"), K(@"VaultHidden"),
+                                  K(@"VaultStyle"), K(@"MonitorStyle"), K(@"VaultAlpha"), K(@"VaultFloating")];
+    // NSUserDefaults 不加前缀，键名就是 plist 里的原样（K() 已经带了 App 名前缀）；
+    // CFPreferences 那边要的也正是这个原样键名 —— 之前多拼了一次前缀，全成了 nil。
+    CFPreferencesAppSynchronize((__bridge CFStringRef)legacy);
+    int moved = 0;
+    for (NSString *key in keys) {
+        CFPropertyListRef v = CFPreferencesCopyAppValue((__bridge CFStringRef)key,
+                                                        (__bridge CFStringRef)legacy);
+        if (!v) continue;
+        [ud setObject:(__bridge id)v forKey:key];
+        CFRelease(v);
+        moved++;
+    }
+    if (moved > 0) {
+        [ud synchronize];
+        DeskLog(@"配置迁移：%@ → %@（搬了 %d 项）", legacy, current, moved);
+    }
 }
 
 - (NSString *)dataDir {
@@ -1866,11 +1903,46 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
     NSMenuItem *quit = DeskAddAction(menu, @"退出 DeskBoard", self, @selector(quit:));
     quit.keyEquivalent = @"q";
 
+    // 临时：二分定位用。四个可辨认的形状，各测一个变量：
+    //   ● circle.fill + DeskBoard 这套大菜单
+    //   ■ square.fill + 简单菜单
     _statusItem.menu = menu;
     [self syncMenu];
     DeskLog(@"菜单栏项 可见=%d 宽度=%.0f 按钮=%@ 图标=%.0fx%.0f", _statusItem.isVisible,
             _statusItem.length, _statusItem.button ? @"有" : @"无",
             _statusItem.button.image.size.width, _statusItem.button.image.size.height);
+
+    // 状态栏项的活体诊断：光看 isVisible 会被骗——菜单栏图标不显示时它照样返回 1。
+    // 这里把「系统到底把这按钮摆在哪、画没画、有没有 alpha、有没有被别的窗口压住」逐项打出来。
+    // 只有 DESKBOARD_STATUS_DIAG=1 时才开（5 秒一拍），产品路径不受影响。
+    if (getenv("DESKBOARD_STATUS_DIAG")) {
+        [NSTimer scheduledTimerWithTimeInterval:5.0 target:self selector:@selector(logStatusItemDiag)
+                                       userInfo:nil repeats:YES];
+        [self logStatusItemDiag];
+    }
+}
+
+// 诊断专用：状态栏按钮的真实状态。isVisible=1 只能证明"项还在"，证明不了"用户看得见"。
+- (void)logStatusItemDiag {
+    NSStatusItem *it = _statusItem;
+    if (!it) { DeskLog(@"状态栏诊断: 没有状态项"); return; }
+    NSButton *b = it.button;
+    NSView *bv = (NSView *)b;      // SDK 里 NSStatusItem.button 的 NSButton 只有前向声明，按 NSView 用
+    NSWindow *w = b.window;
+    NSPoint sp = w ? [w convertPointToScreen:[bv convertPoint:NSZeroPoint toView:nil]] : NSZeroPoint;
+    NSRect f = w ? w.frame : NSZeroRect;
+    NSImage *img = b.image;
+    DeskLog(@"状态栏诊断: itemVisible=%d len=%.0f | btn hidden=%d alpha=%.2f enabled=%d img=%.0fx%.0f tmpl=%d"
+            @" | win=%@ frame=(%.0f,%.0f %.0fx%.0f) vis=%d level=%ld onActiveSpace=%d occ=%ld"
+            @" | 按钮屏幕坐标=(%.0f,%.0f) | app hidden=%d policy=%ld 屏数=%lu",
+            it.isVisible ? 1 : 0, it.length,
+            bv.isHidden ? 1 : 0, bv.alphaValue, b.isEnabled ? 1 : 0,
+            img ? img.size.width : -1, img ? img.size.height : -1, img ? (img.isTemplate ? 1 : 0) : 0,
+            w ? @"有" : @"无", f.origin.x, f.origin.y, f.size.width, f.size.height,
+            w ? (w.isVisible ? 1 : 0) : 0, w ? (long)w.level : 0,
+            w ? (w.isOnActiveSpace ? 1 : 0) : 0, w ? (long)w.occlusionState : 0,
+            sp.x, sp.y, NSApp.isHidden ? 1 : 0, (long)NSApp.activationPolicy,
+            (unsigned long)[NSScreen screens].count);
 }
 
 - (void)syncMenu {

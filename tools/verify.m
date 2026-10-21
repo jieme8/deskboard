@@ -836,18 +836,30 @@ int main(int argc, const char *argv[]) {
             mv.totalCPU = 11.1;                       // 整机口径，和卡片面板同一个数
             [mv updateRows:sc];
             NSString *agg = [mv aggregateTextForMetric:DeskMonitorMetricCPU];
-            double aggV = [agg doubleValue];          // "133%" 这种串 doubleValue 会取前导数字
-            Say(aggV >= 20.2, @"榜头「%@」≥ 榜内最大行的 20.2 —— 换算成单核百分点后总不小于部分", agg);
-            Say(aggV > 11.1 * 8, @"榜头确实按核数放大了（11.1%% 整机 → %@）", agg);
-            // 能耗榜头不能再是自造单位的绝对和
+            // CPU 整块改成「占整机」的口径（满值 100%）：用户原话是
+            // "总的为什么会显示 173%，CPU 总量不是应该 100% 吗"。
+            // 之前榜头是"各核加起来"（12 核满载 1200%），人根本读不出那是上限。
+            NSInteger cores = (NSInteger)[NSProcessInfo.processInfo activeProcessorCount];
+            if (cores < 1) cores = 1;
+            double aggV = [agg doubleValue];          // "整机 11%" 这种串 doubleValue 取不到数
+            NSString *aggNum = [agg substringFromIndex:agg.length >= 3 ? 3 : 0];  // 跳过「整机 」
+            aggV = [aggNum doubleValue];
+            Say([agg hasPrefix:@"整机"], @"CPU 榜头写明分母：「%@」（整机口径，满值 100%%）", agg);
+            Say(aggV >= 0 && aggV <= 100, @"CPU 榜头「%@」落在 0~100%% 之间，不再是 12 核加总的 1200%%", agg);
+            Say(fabs(aggV - 11.1) <= 0.5, @"CPU 榜头就是整机负载本身（11.1%% → %@）", agg);
+            // 榜头和每行现在同一把尺（占整机），所以"总 ≥ 任意一行"必须成立
+            NSString *cpuRow0 = [mv valueTextFor:sc[0] metric:DeskMonitorMetricCPU];
+            double row0 = [cpuRow0 doubleValue];
+            Say(aggV >= row0, @"榜头「%@」≥ 榜内最大行「%@」（同一把尺：占整机）", agg, cpuRow0);
+            // 能耗榜头不能再是自造单位的绝对和，而且分母必须写在脸上
             NSString *ea = [mv aggregateTextForMetric:DeskMonitorMetricEnergy];
-            Say([ea hasPrefix:@"前4占"], @"能耗榜头改成比例读数：「%@」，不再印 191 那种没单位的数", ea);
-            // "前4占 59%"：前 4 个 UTF-16 单元是「前」「4」「占」「空格」，跳过它们再取数
-            double pct = [[ea substringFromIndex:4] doubleValue];
+            Say([ea hasPrefix:@"前4名占全部"], @"能耗榜头改成比例读数并写明分母：「%@」，不再印 191 那种没单位的数", ea);
+            // "前4名占全部 59%"：前 7 个 UTF-16 单元是「前」「4」「名」「占」「全」「部」「空格」，跳过它们再取数
+            double pct = [[ea substringFromIndex:7] doubleValue];
             double total = 0; for (DeskProc *p in sc) total += p.energy;
             double top4 = 0; for (int i = 0; i < 4; i++) top4 += sc[i].energy;
             Say(fabs(pct - top4 / total * 100.0) <= 1.0,
-                @"前4占 %.0f%% 与独立算出的 %.1f%% 对得上", pct, top4 / total * 100.0);
+                @"前4名占全部 %.0f%% 与独立算出的 %.1f%% 对得上", pct, top4 / total * 100.0);
             // 网络榜：榜头以前是系统总速率(48K/s)，每行却是连接数(5) —— 和 #4 同一个毛病，
             // 只是还没被人撞上。现在两边都是"个数"，所以总 ≥ 任意一行必须成立。
             NSString *na = [mv aggregateTextForMetric:DeskMonitorMetricNetwork];
@@ -856,10 +868,13 @@ int main(int argc, const char *argv[]) {
             Say([na hasPrefix:@"共"] && got >= 20.2,
                 @"网络榜头「%@」与每行同量纲，且 ≥ 榜内最大行", na);
             Say(got == want, @"榜头 %ld == 全部进程 socket 之和 %ld", (long)got, (long)want);
-            // 榜内每行也得自带单位：用户原话是"uu 显示 20.2"，一个没单位的数没法和榜头比
-            NSString *cpuRow = [mv valueTextFor:sc[0] metric:DeskMonitorMetricCPU];
-            Say([cpuRow hasSuffix:@"%"] && fabs([cpuRow doubleValue] - 20.2) < 0.05,
-                @"CPU 每行「%@」带 %%，数还是那个 20.2", cpuRow);
+            // 榜内每行也得自带单位、而且和榜头同一把尺：CPU 行印的是占整机的百分比
+            // （单核百分点 ÷ 核数），这样"总数 ≤ 100%"在每一行都成立
+            NSString *cpuRow = cpuRow0;
+            Say([cpuRow hasSuffix:@"%"], @"CPU 每行「%@」带 %%", cpuRow);
+            Say(fabs(row0 - 20.2 / (double)cores) <= 0.06,
+                @"CPU 每行「%@」= 单核 20.2 ÷ %ld 核 = 占整机 %.2f%%", cpuRow, (long)cores, 20.2 / (double)cores);
+            Say(row0 <= 100.0, @"CPU 每行也不会超过 100%%（占整机，满值 100%%）");
             // 能耗每行原来就是那个 "191" —— 自造单位的裸分。现在是占比，且分母和榜头同一个
             NSString *enRow = [mv valueTextFor:sc[0] metric:DeskMonitorMetricEnergy];
             Say([enRow hasSuffix:@"%"] && [enRow doubleValue] <= 100.0,

@@ -38,7 +38,7 @@ for i in $(seq 1 $((mins * 20))); do
             last=$(echo "$win" | grep "松手" | tail -1)
             if [ -n "$last" ]; then
                 disp=$(echo "$last" | grep -oE "位移\([^)]*\)" | head -1)
-                echo "✓ 完整链路：按下 → 拖拽事件 → 松手（$disp）"
+                echo "✓ 完整链路：按下 → 拖拽事件 → 松手（${disp}）"
                 echo "  再看窗口是否停在松手处（不回弹就是修好了）："
                 ./build/tools/dump_window 2>&1 | grep "活动监视器 bounds"
             else

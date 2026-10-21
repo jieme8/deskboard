@@ -7,3 +7,5 @@ deskboard-stage/
 
 # macOS
 .DS_Store
+tools/__pycache__/
+*.pyc

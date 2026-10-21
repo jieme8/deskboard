@@ -156,6 +156,23 @@ sign_bundle() {   # $1 = bundle
   codesign --force --sign - --timestamp=none "$1" >/dev/null 2>&1 || codesign --force --sign - "$1"
 }
 
+# bundle id 是「同一个 App」在系统里的身份。同一个 id 同时存在两份（暂存副本 + 安装副本、
+# 开发产物 + 安装副本），macOS 会把旧的那份自动搬进 ~/.Trash 并**继续留着登记**；
+# 攒到几十条之后，系统认不出「这个菜单栏项属于哪个 App」，菜单栏图标就整个不画
+# （而 isVisible 仍然返回 1，只看日志会被骗过去）。2026-10-21 实测踩过这个坑。
+# 所以：生产 id 只给安装出去的那一份，暂存副本和开发产物各自用别的 id。
+PLIST_BUDDY=/usr/libexec/PlistBuddy
+set_bundle_id() {   # $1 = bundle  $2 = 新的 bundle id
+  "$PLIST_BUDDY" -c "Set :CFBundleIdentifier $2" "$1/Contents/Info.plist" >/dev/null 2>&1 \
+    || "$PLIST_BUDDY" -c "Add :CFBundleIdentifier string $2" "$1/Contents/Info.plist" >/dev/null 2>&1
+}
+PROD_BUNDLE_ID=$("$PLIST_BUDDY" -c "Print :CFBundleIdentifier" "$APP/Contents/Info.plist" 2>/dev/null)
+[ -n "$PROD_BUNDLE_ID" ] || PROD_BUNDLE_ID="com.hujie.deskboard.widget"
+STAGING_BUNDLE_ID="${PROD_BUNDLE_ID}.staging"
+DEV_BUNDLE_ID="${PROD_BUNDLE_ID}.dev"
+# 暂存副本先换成非生产 id：它待会儿要被拷去安装目录，在那之前它不该跟生产 id 撞车
+set_bundle_id "$APP" "$STAGING_BUNDLE_ID"
+
 echo "→ 签名（${SIGN_ID:-ad-hoc}）"
 sign_bundle "$APP"
 codesign --verify --verbose=1 "$APP" 2>&1 | tail -1
@@ -165,8 +182,11 @@ if [ "${1:-}" = "--build" ]; then
   mkdir -p "$BUILD_DIR"
   touch "$BUILD_DIR/.metadata_never_index"
   cp -R "$APP" "$BUILD_DIR/"
+  # 开发产物用开发 id：它和安装出去的那份同时在盘上，不能共用生产 id
+  set_bundle_id "$BUILD_DIR/$APP_NAME.app" "$DEV_BUNDLE_ID"
+  sign_bundle "$BUILD_DIR/$APP_NAME.app"
   "$LSREGISTER" -u "$BUILD_DIR/$APP_NAME.app" 2>/dev/null || true
-  echo "→ 只构建模式，产物：$BUILD_DIR/$APP_NAME.app（已禁止索引）"
+  echo "→ 只构建模式，产物：$BUILD_DIR/$APP_NAME.app（已禁止索引，bundle id=${DEV_BUNDLE_ID}）"
   exit 0
 fi
 
@@ -181,11 +201,22 @@ mkdir -p "$BUILD_DIR" && touch "$BUILD_DIR/.metadata_never_index"
 rm -rf "$BUILD_DIR/$APP_NAME.app"
 pkill -x "$APP_NAME" 2>/dev/null || true
 sleep 0.4
-rm -rf "$INSTALL_DIR/$APP_NAME.app"
-cp -R "$APP" "$INSTALL_DIR/"
+# 原地替换，路径保持不变。
+# 同 id 换路径会被系统当成「装了新版本」：旧的自动搬进 ~/.Trash 并**继续留着登记**，
+# 同一个 id 攒够几十条之后，系统就认不出菜单栏项属于哪个 App，整个不画（isVisible 仍返回 1）。
+# 只清 Contents、保留 bundle 目录本身，登记路径就不变，也不会再产生新的旧副本。
+rm -rf "$INSTALL_DIR/$APP_NAME.app/Contents"
+mkdir -p "$INSTALL_DIR/$APP_NAME.app"
+cp -R "$APP/Contents" "$INSTALL_DIR/$APP_NAME.app/"
+# 装出去的这份才用生产 id
+set_bundle_id "$INSTALL_DIR/$APP_NAME.app" "$PROD_BUNDLE_ID"
 sign_bundle "$INSTALL_DIR/$APP_NAME.app"
 touch "$INSTALL_DIR/$APP_NAME.app"
 "$LSREGISTER" -f "$INSTALL_DIR/$APP_NAME.app" 2>/dev/null || true
+# 暂存副本用完就注销，别让它在系统里留一条同源的记录
+"$LSREGISTER" -u "$APP" 2>/dev/null || true
+rm -rf "$APP" 2>/dev/null || true
+echo "→ 已安装（bundle id=${PROD_BUNDLE_ID}）"
 
 open "$INSTALL_DIR/$APP_NAME.app"
 sleep 1.5

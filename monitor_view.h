@@ -20,7 +20,7 @@ typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
 };
 
 @interface DeskMonitorView : NSView
-// 系统总量（榜头读数）：CPU 是整机 0~100（榜头自己换算成全核），内存是已用/物理字节。
+// 系统总量（榜头读数）：CPU 是整机 0~100（榜头与每行同一把尺，都是占整机），内存是已用/物理字节。
 // 网络榜头不再吃系统 B/s —— 那是"速率"，和榜内每行的"连接数"不是同一个量，
 // 并排放着就会重演"总 CPU 比单进程还小"那个困惑。整机网速在卡片面板上有（↓41K ↑12K）。
 @property (nonatomic, assign) double totalCPU;

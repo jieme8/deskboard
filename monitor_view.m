@@ -21,7 +21,8 @@ static const CGFloat kBarH = 2.0;
 static const CGFloat kValueW = 34.0;
 static const CGFloat kGridTop = 48.0;          // 顶栏 + 分隔线 + 间距之后的第一格上沿
 
-// 逻辑核数。榜头的 CPU 要换算成"全部核加起来"的口径，才能和每行同尺（见 aggregateFor:）
+// 逻辑核数。CPU 每行原来印的是"占一个核的百分比"，现在整块改成占整机（见 valueTextFor:），
+// 这个核数就是两把尺之间的换算系数。
 // 定义在文件后半（悬停浮层那边），这里前置声明，好让 historyText 这个只读口能用它
 static NSString *MonHistText(NSInteger metric, double avg, double covered, double energyTotal);
 
@@ -33,6 +34,14 @@ static NSInteger MonCoreCount(void) {
         if (cores < 1) cores = 1;
     });
     return cores;
+}
+
+// 单核百分点 → 占整机的百分点。
+// 用户原话："总的为什么会显示 173%，CPU 总量不是应该 100% 吗"。
+// 之前榜头印的是"各核加起来"（12 核满载 1200%），每行印的是"占一个核"，
+// 两把尺并排放着，怎么写都看不懂。现在整块统一成"占整机"，满值 100%。
+static double MonCpuShare(double singleCorePct) {
+    return singleCorePct / (double)MonCoreCount();
 }
 
 // 能耗是"占全部进程的比例"，不是自造单位的绝对值（见 valueTextFor:）。分母 <=0 时给 0，
@@ -57,7 +66,7 @@ static NSColor *MonMetricColor(NSInteger m) {
 }
 static NSString *MonMetricLabel(NSInteger m) {
     switch (m) {
-        case DeskMonitorMetricCPU: return @"CPU 全核";   // 标"全核"：每行也是单核百分点，同尺才可比
+        case DeskMonitorMetricCPU: return @"CPU";   // 榜头自己写着「整机 37%」，分母不用塞进标题里
         case DeskMonitorMetricMemory: return @"内存";
         case DeskMonitorMetricEnergy: return @"能耗（估）";
         // 榜头是系统总速率，榜内每行是"活跃 socket 数"——每进程字节数这条路暂时接不了
@@ -523,11 +532,11 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 - (NSString *)aggregateFor:(NSInteger)m {
     switch (m) {
         case DeskMonitorMetricCPU:
-            // 榜头原来印"整机 11%"，每行却是"占一核 20.2%"（sysmon 除以 total、procs 除以
-            // wall），两个分母并排放着，用户第一反应就是"总数怎么比单个进程还小"。
-            // 换成同一把尺：全部核加起来的单核百分点（12 核满载 = 1200%）。
-            // 这样"总 ≥ 任意一行"由构造保证，不用心算核数。
-            return [NSString stringWithFormat:@"%.0f%%", MAX(0, _totalCPU) * MonCoreCount()];
+            // 整机口径，满值 100% —— 用户原话是"CPU 总量不是应该 100% 吗"。
+            // 之前印"全部核加起来"（12 核满载 1200%），榜头比每行大好几倍，
+            // 人第一反应是"这数不对"；现在榜头和每行都是占整机的百分比，
+            // 同一把尺、满值 100%，"总 ≥ 任意一行"照样成立。
+            return [NSString stringWithFormat:@"整机 %.0f%%", MAX(0.0, MIN(100.0, _totalCPU))];
         case DeskMonitorMetricMemory: {
             if (_totalMemPhys <= 0) return @"—";
             return [NSString stringWithFormat:@"%.0fG/%.0fG", _totalMemUsed / 1e9, _totalMemPhys / 1e9];
@@ -537,8 +546,10 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
             // 造的（原生活动监视器那个数走 IOReport，这台系统的 IOKit 没导出符号拿不到）。
             // 自造单位的绝对值求和没有任何含义，用户只会问"191 是什么"。换成有界可读、
             // 且正是这一榜用途的数：前四名吃掉多少比例。
+            // 分母必须写在脸上：光一个"66%"没人知道是占谁的 —— 用户原话就是
+            // "能耗这块 61% 也没懂代表什么意思"。所以明写"占全部"（= 全部进程的能耗合计）。
             if (_topShare <= 0) return @"—";   // 守卫只看 _topShare：它和读数同源，别拿外部喂的 _totalEnergy 当第二套真相
-            return [NSString stringWithFormat:@"前4占 %.0f%%", MAX(0.0, MIN(100.0, _topShare * 100.0))];
+            return [NSString stringWithFormat:@"前4名占全部 %.0f%%", MAX(0.0, MIN(100.0, _topShare * 100.0))];
         default:
             // 原来是系统总速率（48K/s）配一堆连接数（5、4、4）—— 榜头是"速率"、每行是"个数"，
             // 和单位换算那条是同一个毛病，只是还没被人撞上。改成同量纲的总数。
@@ -663,9 +674,16 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 
 - (NSString *)valueTextFor:(DeskProc *)p metric:(NSInteger)m {
     switch (m) {
-        // 每行也得带单位。原来 CPU 行印 "20.2"、榜头印 "133%"，同一榜两种写法，
-        // 用户读不出这是"占一个核"还是"占整机"。
-        case DeskMonitorMetricCPU: return [NSString stringWithFormat:@"%.1f%%", p.cpu];
+        // 每行也得带单位，而且必须和榜头同一把尺。
+        // CPU 行原来印"占一个核的 20.2%"、榜头印"各核加起来"，两个分母并排 ——
+        // 用户看不出该拿哪个当"总量"。现在两处都是占整机（满值 100%）。
+        case DeskMonitorMetricCPU: {
+            double share = MonCpuShare(p.cpu);
+            // 换成占整机后数值会变得很小：机器占用 0.04% 四舍五入就是 "0.0%"，
+            // 那是假零（真 idle 的进程和"小到看不见"在屏上长得一样）。宁可印 "<0.1%"。
+            if (share > 0 && share < 0.05) return @"<0.1%";
+            return [NSString stringWithFormat:@"%.1f%%", share];
+        }
         case DeskMonitorMetricMemory: {
             // 榜头是 1e9 的 GB，行内原来走 1048576/1024 —— 同一个 1.5GB 的进程
             // 会被印成 1.4G，同一榜两种进制。统一成十进制（和榜头"23G/24G"一把尺）。
@@ -1094,7 +1112,9 @@ static NSString *MonUptime(long long startedAt) {
 static NSString *MonHistText(NSInteger metric, double avg, double covered, double energyTotal) {
     if (covered <= 0) return nil;
     switch (metric) {
-        case DeskMonitorMetricCPU: return [NSString stringWithFormat:@"12h %.1f%%", avg];
+        // 12h 平均必须和这一行当前值同一把尺，否则并排放着还是看不懂。
+        // CPU 存的是单核百分点，屏上现在统一印占整机，这里跟着换算。
+        case DeskMonitorMetricCPU: return [NSString stringWithFormat:@"12h %.1f%%", MonCpuShare(avg)];
         case DeskMonitorMetricMemory: {
             // 和行内、榜头同一进制（1e6/1e9）。混用 1048576 会把 900MB 印成 858M，
             // 悬停里的 12h 值和行内当前值就不是一把尺了。
@@ -1128,11 +1148,15 @@ static NSString *MonHistText(NSInteger metric, double avg, double covered, doubl
     y += 16.0;
 
     struct { NSString *label; double v; NSInteger metric; NSString *text; } lines[] = {
-        { @"CPU", _cpu, DeskMonitorMetricCPU, [NSString stringWithFormat:@"%.1f%%", _cpu] },
+        // 气泡里的 CPU 跟榜内同一把尺（占整机），后面补一句"占单核"：
+        // 有人会拿原生活动监视器的 31.9%（那也是占一核）来对，两个数都摆着最省事。
+        { @"CPU", _cpu, DeskMonitorMetricCPU, [NSString stringWithFormat:@"%.1f%%（单核 %.1f%%）",
+                                               MonCpuShare(_cpu), _cpu] },
         { @"内存", _mem, DeskMonitorMetricMemory,
             _mem >= 1e9 ? [NSString stringWithFormat:@"%.1fG", _mem / 1e9]
                         : [NSString stringWithFormat:@"%.0fM", _mem / 1048576.0] },
-        { @"能耗（估）", _energy, DeskMonitorMetricEnergy, self.energyTotal > 0
+        // 能耗的分母是"全部进程的能耗合计"，气泡里也写出来（榜头已经写了"占全部"）
+        { @"能耗（占全部）", _energy, DeskMonitorMetricEnergy, self.energyTotal > 0
             ? [NSString stringWithFormat:@"%.0f%%", MonShare(_energy, self.energyTotal)] : @"—" },
         { @"网络·连接", (double)_sockets, DeskMonitorMetricNetwork, [NSString stringWithFormat:@"%ld", (long)_sockets] },
     };

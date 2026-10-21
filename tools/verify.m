@@ -935,6 +935,16 @@ int main(int argc, const char *argv[]) {
                     && ![zz.lowercaseString containsString:@"inf"], @"能耗全 0 时读数「%@」不是 nan", zz);
                 [mv updateRows:sc];   // 恢复现场
             }
+            {   // 哨兵值不许印成负数：procs.m 里"这一拍还没有上一拍可比"用 -1 表示，
+                // 照着印百分比会得到 "-1.0%"（实测气泡里就出现过）。未知就是未知，印"—"。
+                DeskProc *sn = [DeskProc new];
+                sn.pid = 7501; sn.name = @"sn"; sn.cpu = -1; sn.energy = -1;
+                sn.wakeups = -1; sn.sockets = 0;
+                NSString *sc1 = [mv valueTextFor:sn metric:DeskMonitorMetricCPU];
+                NSString *sc2 = [mv valueTextFor:sn metric:DeskMonitorMetricEnergy];
+                Say([sc1 isEqualToString:@"—"], @"CPU 哨兵(-1)印「%@」而不是负的百分比", sc1);
+                Say([sc2 isEqualToString:@"—"], @"能耗哨兵(-1)印「%@」而不是假零", sc2);
+            }
             {   // 同一榜一种进制：行内内存和榜头都用 1e9 的 G。
                 // 旧写法用 1048576/1024，1.5e9 会印成 1.4G（这条断言会红）。
                 DeskProc *mp = [DeskProc new];

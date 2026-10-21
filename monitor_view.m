@@ -680,6 +680,9 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         // CPU 行原来印"占一个核的 20.2%"、榜头印"各核加起来"，两个分母并排 ——
         // 用户看不出该拿哪个当"总量"。现在两处都是占整机（满值 100%）。
         case DeskMonitorMetricCPU: {
+            // -1 是"这一拍还没有上一拍可比"的哨兵（procs.m 里首拍/间隔过短就置它）。
+            // 把它当成百分比印出去会得到"-1.0%"——负的百分比。未知就是未知，印"—"。
+            if (p.cpu < 0) return @"—";
             double share = MonCpuShare(p.cpu);
             // 换成占整机后数值会变得很小：机器占用 0.04% 四舍五入就是 "0.0%"，
             // 那是假零（真 idle 的进程和"小到看不见"在屏上长得一样）。宁可印 "<0.1%"。
@@ -695,9 +698,10 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         }
         // 能耗每行原来是裸的分（用户撞上的就是那个 "191"）—— 单位是我按
         // "CPU% + 唤醒次数×0.08" 造的，绝对值没有任何人能解读。换成占比：分母就是
-        // 榜头"前4占 xx%"用的同一个 _energyTotal（同一次循环算的，不留第二套真相）。
-        case DeskMonitorMetricEnergy: return [NSString stringWithFormat:@"%.0f%%",
-                                              MonShare(p.energy, _energyTotal)];
+        // 榜头"前4名占全部 xx%"用的同一个 _energyTotal（同一次循环算的，不留第二套真相）。
+        // p.energy < 0 是哨兵：MonShare 会把负值当 0，那就是假零 —— 印"—"。
+        case DeskMonitorMetricEnergy: return p.energy < 0 ? @"—"
+            : [NSString stringWithFormat:@"%.0f%%", MonShare(p.energy, _energyTotal)];
         // 行内也带单位："5" 看不出是连接数、进程数还是别的
         default: return [NSString stringWithFormat:@"%ld 条", (long)p.sockets];
     }
@@ -1153,13 +1157,15 @@ static NSString *MonHistText(NSInteger metric, double avg, double covered, doubl
     struct { NSString *label; double v; NSInteger metric; NSString *text; } lines[] = {
         // 气泡里的 CPU 跟榜内同一把尺（占整机），后面补一句"占单核"：
         // 有人会拿原生活动监视器的 31.9%（那也是占一核）来对，两个数都摆着最省事。
-        { @"CPU", _cpu, DeskMonitorMetricCPU, [NSString stringWithFormat:@"%.1f%%（单核 %.1f%%）",
-                                               MonCpuShare(_cpu), _cpu] },
+        // _cpu < 0 是"还没有上一拍可比"的哨兵，印百分比会变成负数，印"—"。
+        { @"CPU", _cpu, DeskMonitorMetricCPU, _cpu < 0 ? @"—"
+            : [NSString stringWithFormat:@"%.1f%%（单核 %.1f%%）", MonCpuShare(_cpu), _cpu] },
         { @"内存", _mem, DeskMonitorMetricMemory,
             _mem >= 1e9 ? [NSString stringWithFormat:@"%.1fG", _mem / 1e9]
                         : [NSString stringWithFormat:@"%.0fM", _mem / 1048576.0] },
-        // 能耗的分母是"全部进程的能耗合计"，气泡里也写出来（榜头已经写了"占全部"）
-        { @"能耗（占全部）", _energy, DeskMonitorMetricEnergy, self.energyTotal > 0
+        // 能耗的分母是"全部进程的能耗合计"，气泡里也写出来（榜头已经写了"占全部"）。
+        // _energy < 0 是哨兵（这一拍没法算），MonShare 会把它当 0 → 假零，改印"—"。
+        { @"能耗（占全部）", _energy, DeskMonitorMetricEnergy, (self.energyTotal > 0 && _energy >= 0)
             ? [NSString stringWithFormat:@"%.0f%%", MonShare(_energy, self.energyTotal)] : @"—" },
         { @"网络·连接", (double)_sockets, DeskMonitorMetricNetwork, [NSString stringWithFormat:@"%ld 条", (long)_sockets] },
     };

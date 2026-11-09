@@ -1,0 +1,927 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CREDITS · 90D MAX · 签到中心 90 天总积分纪录</title>
+<style>
+  :root {
+    --paper: #e2f6ff;
+    --cyan: #70d8ff;
+    --cyan-bright: #b2eeff;
+    --muted: #7eb0ce;
+    --muted-dim: rgba(126, 176, 206, .55);
+    --amber: #ffc46b;
+    --red: #ff8a7a;
+    --ink: #0a1a2a;
+    --line: rgba(112, 216, 255, .14);
+    --mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #060c14; color: var(--paper); }
+  body {
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: geometricPrecision;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+      radial-gradient(1200px 700px at 78% -10%, rgba(42, 104, 150, .22), transparent 62%),
+      radial-gradient(900px 600px at 8% 100%, rgba(112, 216, 255, .07), transparent 60%);
+  }
+  a { color: var(--cyan); text-decoration: none; }
+  .page { position: relative; z-index: 1; max-width: 1560px; margin: 0 auto; padding: 28px 32px 64px; }
+
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding-bottom: 18px; border-bottom: 1px solid rgba(112, 216, 255, .10);
+  }
+  .brand {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 11px; letter-spacing: .16em; color: var(--muted);
+  }
+  .brand .dot { width: 6px; height: 6px; background: var(--cyan); box-shadow: 0 0 8px rgba(112, 216, 255, .7); }
+  .brand b { color: var(--paper); font-weight: 600; }
+  .badge {
+    font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+    color: var(--amber); border: 1px solid rgba(255, 196, 107, .35);
+    background: rgba(255, 196, 107, .06); padding: 4px 9px; border-radius: 999px;
+    white-space: nowrap;
+  }
+
+  .hero {
+    display: grid; grid-template-columns: 1.1fr .9fr; gap: 44px;
+    align-items: end; padding: 54px 0 40px;
+  }
+  .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: .18em; color: var(--cyan); margin-bottom: 12px; }
+  h1 { font-size: clamp(34px, 4.2vw, 56px); line-height: 1.02; letter-spacing: -.03em; margin: 0 0 16px; font-weight: 650; }
+  h1 em { font-style: normal; color: var(--cyan); }
+  .hero p { max-width: 660px; color: #b7d3e4; font-size: 15px; line-height: 1.8; margin: 0; }
+  .hero p b { color: var(--paper); font-weight: 600; }
+  .rules { display: grid; gap: 12px; border-left: 1px solid rgba(112, 216, 255, .18); padding-left: 20px; }
+  .rule { display: grid; grid-template-columns: 26px 58px 1fr; gap: 10px; align-items: baseline; font-size: 12px; color: #a9c6d8; }
+  .rule b { font-family: var(--mono); font-size: 10px; color: var(--cyan); letter-spacing: .08em; }
+  .rule span { color: var(--paper); font-weight: 500; white-space: nowrap; }
+  .rule em { font-style: normal; color: var(--muted); }
+
+  .lab {
+    border: 1px solid rgba(112, 216, 255, .14);
+    background: rgba(8, 18, 30, .55);
+    border-radius: 18px;
+    overflow: hidden;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, .35);
+  }
+  .lab-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+    padding: 14px 18px; border-bottom: 1px solid rgba(112, 216, 255, .10);
+  }
+  .lab-title { font-family: var(--mono); font-size: 11px; letter-spacing: .12em; color: var(--muted); }
+  .lab-title span { color: var(--paper); }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  .controls button {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em;
+    color: #9fc0d4; background: rgba(112, 216, 255, .04);
+    border: 1px solid rgba(112, 216, 255, .18); border-radius: 8px;
+    padding: 7px 10px; cursor: pointer; transition: .18s ease;
+  }
+  .controls button:hover { border-color: rgba(112, 216, 255, .4); color: var(--paper); }
+  .controls button.on { color: #06141f; background: var(--cyan); border-color: var(--cyan); font-weight: 700; }
+
+  .stage {
+    position: relative; overflow: hidden;
+    padding: 42px 24px 38px;
+    background:
+      radial-gradient(900px 460px at 68% 18%, rgba(73, 134, 180, .24), transparent 62%),
+      radial-gradient(760px 420px at 18% 88%, rgba(112, 216, 255, .10), transparent 60%),
+      linear-gradient(135deg, #0b1624, #0a111b 46%, #070d15);
+  }
+  .stage::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background-image:
+      linear-gradient(rgba(112, 216, 255, .035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(112, 216, 255, .035) 1px, transparent 1px);
+    background-size: 32px 32px;
+    mask-image: radial-gradient(ellipse at center, black 20%, transparent 78%);
+  }
+  .stage::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    box-shadow: inset 0 0 80px rgba(0, 0, 0, .5);
+  }
+  .stage-marker {
+    position: absolute; top: 16px; left: 20px; z-index: 2;
+    display: flex; align-items: center; gap: 7px;
+    font-family: var(--mono); font-size: 9px; letter-spacing: .16em; color: rgba(126, 176, 206, .72);
+  }
+  .stage-marker i { width: 9px; height: 9px; border: 1px solid rgba(112, 216, 255, .55); position: relative; }
+  .stage-marker i::before, .stage-marker i::after {
+    content: ""; position: absolute; background: rgba(112, 216, 255, .55);
+  }
+  .stage-marker i::before { left: 4px; top: -3px; width: 1px; height: 15px; }
+  .stage-marker i::after { top: 4px; left: -3px; height: 1px; width: 15px; }
+  .widget-shell { position: relative; margin: 0 auto; z-index: 1; }
+
+  /* ---- 组件本体：700×132，1× 尺寸，舞台整体缩放 ---- */
+  .credits-widget {
+    position: relative;
+    width: 700px; height: 132px;
+    padding: 10px 12px 8px;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-rows: 114px;
+    column-gap: 10px; row-gap: 0;
+    border-radius: 14px;
+    border: 1px solid rgba(112, 216, 255, .16);
+    background: linear-gradient(180deg, rgba(10, 26, 42, .80), rgba(7, 17, 29, .74));
+    backdrop-filter: blur(18px) saturate(1.25);
+    -webkit-backdrop-filter: blur(18px) saturate(1.25);
+    box-shadow: 0 26px 70px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .04);
+    transform-origin: top left;
+    transition: height .22s ease;
+  }
+  .credits-widget::before {
+    content: ""; position: absolute; inset: 0; border-radius: 14px; pointer-events: none;
+    background: radial-gradient(800px 240px at 50% -20%, rgba(112, 216, 255, .10), transparent 70%);
+  }
+  .corner {
+    position: absolute; width: 13px; height: 13px;
+    border-color: rgba(112, 216, 255, .45); border-style: solid; pointer-events: none; z-index: 3;
+  }
+  .corner.tl { top: 6px; left: 6px; border-width: 1.2px 0 0 1.2px; }
+  .corner.tr { top: 6px; right: 6px; border-width: 1.2px 1.2px 0 0; }
+  .corner.bl { bottom: 6px; left: 6px; border-width: 0 0 1.2px 1.2px; }
+  .corner.br { bottom: 6px; right: 6px; border-width: 0 1.2px 1.2px 0; }
+
+  .tile {
+    position: relative; height: 114px;
+    border-radius: 9px;
+    border: 1px solid rgba(112, 216, 255, .14);
+    background: linear-gradient(180deg, rgba(10, 26, 42, .66), rgba(8, 20, 34, .54));
+    padding: 7px 9px;
+    overflow: hidden;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035);
+  }
+  .tile::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(240px 80px at 20% -10%, rgba(112, 216, 255, .06), transparent 70%);
+  }
+  .tile-head { position: relative; z-index: 1; display: flex; align-items: center; gap: 5px; height: 13px; }
+  .led { width: 5px; height: 5px; background: var(--cyan); flex: none; }
+  .led.amber { background: var(--amber); }
+  .led.off { background: transparent; border: 1px solid rgba(126, 176, 206, .55); }
+  .name { font-size: 10px; font-weight: 600; letter-spacing: .01em; color: var(--paper); white-space: nowrap; }
+  .pill {
+    margin-left: auto; flex: none;
+    font-family: var(--mono); font-size: 7px; font-weight: 700; line-height: 1;
+    padding: 3px 5px; border-radius: 6.5px;
+    color: var(--cyan); border: 1px solid rgba(112, 216, 255, .85);
+    background: rgba(112, 216, 255, .10);
+  }
+  .pill.amber { color: var(--amber); border-color: rgba(255, 196, 107, .85); background: rgba(255, 196, 107, .08); }
+
+  .plan {
+    position: relative; z-index: 1;
+    margin-top: 1px; height: 8px; line-height: 8px;
+    font-family: var(--mono); font-size: 6.7px; letter-spacing: .02em;
+    color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .plan .warn { color: var(--amber); }
+
+  .balance {
+    position: relative; z-index: 1;
+    margin-top: 8px; height: 22px; line-height: 22px;
+    display: flex; align-items: baseline; gap: 4px;
+    font-family: var(--mono); font-size: 22px; font-weight: 700;
+    letter-spacing: -.02em; color: var(--paper);
+    font-variant-numeric: tabular-nums;
+  }
+  .balance .unit { font-size: 7px; font-weight: 400; color: var(--muted); letter-spacing: 0; }
+
+  .status {
+    position: relative; z-index: 1;
+    margin-top: 5px; height: 11px; line-height: 11px;
+    display: flex; align-items: baseline; justify-content: space-between; gap: 6px;
+    font-size: 9px; font-weight: 600; color: var(--cyan);
+  }
+  .status-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .last-event {
+    flex: none; font-family: var(--mono); font-size: 7.2px; font-weight: 500;
+    color: rgba(126, 176, 206, .86); letter-spacing: .01em; white-space: nowrap;
+  }
+  .status.amber { color: var(--amber); }
+  .status.amber .last-event { color: rgba(126, 176, 206, .76); }
+  .status.long .last-event { display: none; }
+  .tile.off .last-event { display: none; }
+
+  /* ---- 新增：90 天记录行 ---- */
+  .record-inline {
+    position: absolute; z-index: 2;
+    left: 9px; right: 9px; top: 79px; height: 9px;
+    display: flex; align-items: baseline; gap: 3px;
+    white-space: nowrap;
+  }
+  .record-inline .rlabel { font-size: 6.2px; line-height: 9px; color: rgba(126, 176, 206, .86); letter-spacing: .02em; }
+  .record-inline .rvalue {
+    font-family: var(--mono); font-size: 8.8px; line-height: 9px; font-weight: 700;
+    color: var(--paper); letter-spacing: -.01em; font-variant-numeric: tabular-nums;
+  }
+  .record-inline .runit { font-family: var(--mono); font-size: 6px; color: var(--muted); }
+  .record-inline .rdate { margin-left: auto; font-family: var(--mono); font-size: 6.2px; color: var(--muted); }
+  .record-inline.new .rvalue { color: var(--cyan-bright); text-shadow: 0 0 8px rgba(178, 238, 255, .45); }
+  .record-inline.new .rdate { color: var(--cyan-bright); }
+  .tri {
+    width: 0; height: 0; align-self: center; margin-left: 1px;
+    border-left: 2.6px solid transparent; border-right: 2.6px solid transparent;
+    border-bottom: 4px solid var(--cyan-bright);
+    filter: drop-shadow(0 0 3px rgba(178, 238, 255, .55));
+  }
+
+  /* ---- 新增：90 格记录尺（一天一格） ---- */
+  .record-rail {
+    position: absolute; z-index: 2;
+    left: 9px; right: 9px; top: 89.5px; height: 4px;
+    display: flex; align-items: flex-end; gap: .45px;
+  }
+  .record-rail i { display: block; flex: 1 1 0; min-width: 0; height: 2px; background: rgba(112, 216, 255, .24); position: relative; }
+  .record-rail i.gap { height: 1px; background: rgba(126, 176, 206, .08); }
+  .record-rail i.peak { height: 4px; background: var(--cyan-bright); box-shadow: 0 0 5px rgba(178, 238, 255, .55); }
+  .record-rail i.today { height: 3px; background: var(--amber); }
+  .record-rail i.today.peak { background: var(--cyan-bright); }
+  .record-rail i.today.peak::after {
+    content: ""; position: absolute; left: 0; right: 0; top: 0; height: 1px; background: var(--amber);
+  }
+  .rule-line {
+    display: none; position: absolute; z-index: 1;
+    left: 9px; right: 9px; top: 92px; height: 1px;
+    background: rgba(112, 216, 255, .08);
+  }
+  body.rail-off .record-rail { display: none; }
+  body.rail-off .rule-line { display: block; }
+
+  .tile-foot {
+    position: absolute; z-index: 2;
+    left: 9px; right: 9px; bottom: 7px; height: 10px;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .cycle { display: flex; gap: 2px; flex: none; }
+  .cycle i { width: 4px; height: 4px; background: rgba(126, 176, 206, .22); }
+  .cycle i.on { background: var(--cyan); }
+  .cycle i.ring { background: var(--cyan-bright); box-shadow: 0 0 0 .8px var(--cyan-bright); }
+  .cycle i.pending { background: var(--amber); box-shadow: 0 0 0 .8px var(--amber); }
+  .loginbar { width: 40px; height: 3px; background: rgba(126, 176, 206, .16); flex: none; }
+  .loginbar i { display: block; height: 3px; width: 73%; background: var(--cyan); }
+  .claim { display: flex; align-items: center; gap: 4px; flex: none; }
+  .claim .chip {
+    font-family: var(--mono); font-size: 6.2px; line-height: 1;
+    color: var(--cyan); border: 1px solid rgba(112, 216, 255, .26);
+    background: rgba(112, 216, 255, .05); border-radius: 4px; padding: 1px 3px;
+  }
+  .claim .dot { width: 4px; height: 4px; background: var(--cyan); }
+  .foot-text {
+    flex: 1; min-width: 0;
+    font-family: var(--mono); font-size: 7.2px; color: var(--paper);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tile.qoder .foot-text { color: var(--muted); }
+
+  /* ---- 方案 B：底部记录带 ---- */
+  .record-band { display: none; grid-column: 1 / -1; height: 18px; padding-top: 3px; border-top: 1px solid rgba(112, 216, 255, .10); grid-template-columns: repeat(4, minmax(0, 1fr)); column-gap: 10px; }
+  .band-cell { display: flex; align-items: baseline; gap: 3px; min-width: 0; padding: 0 9px; white-space: nowrap; overflow: hidden; }
+  .band-cell .blabel { font-size: 6.4px; color: rgba(126, 176, 206, .86); }
+  .band-cell .bvalue { font-family: var(--mono); font-size: 11px; line-height: 13px; font-weight: 700; color: var(--paper); font-variant-numeric: tabular-nums; }
+  .band-cell .bunit { font-family: var(--mono); font-size: 6px; color: var(--muted); }
+  .band-cell .bdate { margin-left: auto; font-family: var(--mono); font-size: 6.2px; color: var(--muted); }
+  .band-cell.new .bvalue, .band-cell.new .bdate { color: var(--cyan-bright); text-shadow: 0 0 8px rgba(178, 238, 255, .4); }
+  body[data-variant="b"] .credits-widget { height: 150px; grid-template-rows: 114px 18px; }
+  body[data-variant="b"] .record-band { display: grid; }
+  body[data-variant="b"] .record-inline, body[data-variant="b"] .record-rail { display: none; }
+  body[data-variant="b"] .rule-line { display: block; }
+
+  .stage-note {
+    position: relative; z-index: 2;
+    display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+    padding: 12px 18px 0; color: rgba(126, 176, 206, .78);
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: .02em;
+  }
+  .stage-note b { color: var(--paper); font-weight: 600; }
+
+  .legend { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-top: 18px; }
+  .legend article {
+    border: 1px solid rgba(112, 216, 255, .12); border-radius: 12px;
+    background: rgba(8, 18, 30, .5); padding: 14px 15px;
+  }
+  .legend .no { font-family: var(--mono); font-size: 9px; letter-spacing: .12em; color: var(--cyan); }
+  .legend h3 { margin: 6px 0 4px; font-size: 13px; font-weight: 600; color: var(--paper); }
+  .legend p { margin: 0; font-size: 11.5px; line-height: 1.65; color: #9fbdd0; }
+
+  section.block { margin-top: 56px; }
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+  .section-head h2 { margin: 0; font-size: 24px; letter-spacing: -.02em; font-weight: 600; }
+  .section-head span { font-family: var(--mono); font-size: 10px; letter-spacing: .1em; color: var(--muted); }
+
+  .state-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+  .state-card {
+    border: 1px solid rgba(112, 216, 255, .12); border-radius: 12px;
+    background: rgba(8, 18, 30, .5); padding: 14px;
+    display: flex; flex-direction: column; gap: 10px; min-height: 176px;
+  }
+  .state-chip {
+    align-self: flex-start; font-family: var(--mono); font-size: 9px; letter-spacing: .06em;
+    color: var(--cyan); border: 1px solid rgba(112, 216, 255, .3);
+    background: rgba(112, 216, 255, .06); border-radius: 999px; padding: 2px 8px;
+  }
+  .state-chip.amber { color: var(--amber); border-color: rgba(255, 196, 107, .3); background: rgba(255, 196, 107, .06); }
+  .state-chip.dim { color: var(--muted); border-color: rgba(126, 176, 206, .25); background: rgba(126, 176, 206, .05); }
+  .demo-record { display: flex; align-items: baseline; gap: 3px; white-space: nowrap; }
+  .demo-record .rlabel { font-size: 8px; color: rgba(126, 176, 206, .86); }
+  .demo-record .rvalue { font-family: var(--mono); font-size: 15px; font-weight: 700; color: var(--paper); font-variant-numeric: tabular-nums; }
+  .demo-record .runit { font-family: var(--mono); font-size: 8px; color: var(--muted); }
+  .demo-record .rdate { margin-left: auto; font-family: var(--mono); font-size: 8px; color: var(--muted); }
+  .demo-record.new .rvalue, .demo-record.new .rdate { color: var(--cyan-bright); }
+  .demo-rail { display: flex; align-items: flex-end; gap: 1px; height: 8px; }
+  .demo-rail i { flex: 1; height: 3px; background: rgba(112, 216, 255, .28); }
+  .demo-rail i.gap { height: 1px; background: rgba(126, 176, 206, .10); }
+  .demo-rail i.peak { height: 8px; background: var(--cyan-bright); }
+  .demo-rail i.today { height: 4px; background: var(--amber); }
+  .demo-off {
+    display: flex; align-items: center; gap: 6px;
+    font-family: var(--mono); font-size: 10px; color: rgba(126, 176, 206, .55);
+    border: 1px dashed rgba(126, 176, 206, .22); border-radius: 6px;
+    padding: 5px 8px; width: fit-content;
+  }
+  .demo-off i { width: 5px; height: 5px; border: 1px solid rgba(126, 176, 206, .45); }
+  .state-card p { margin: 0; color: #9fbdd0; font-size: 11px; line-height: 1.6; }
+  .state-card code { font-family: var(--mono); font-size: 10px; color: var(--paper); }
+
+  .spec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .panel {
+    border: 1px solid rgba(112, 216, 255, .12); border-radius: 14px;
+    background: rgba(8, 18, 30, .5); padding: 20px;
+  }
+  .panel h3 { margin: 0 0 14px; font-size: 15px; font-weight: 600; color: var(--paper); }
+  .panel h3 span { font-family: var(--mono); font-size: 9px; letter-spacing: .1em; color: var(--muted); margin-left: 8px; }
+  table.spec { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  table.spec th, table.spec td { text-align: left; padding: 7px 0; border-bottom: 1px solid rgba(112, 216, 255, .08); vertical-align: top; }
+  table.spec th { font-family: var(--mono); font-size: 9px; letter-spacing: .08em; color: var(--muted); font-weight: 500; }
+  table.spec td { color: #b7d3e4; }
+  table.spec td b { color: var(--paper); font-weight: 600; }
+  table.spec code { font-family: var(--mono); font-size: 10.5px; color: var(--cyan); }
+  .flow { display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .flow .step {
+    flex: 1 1 120px; border: 1px solid rgba(112, 216, 255, .14); border-radius: 8px;
+    background: rgba(112, 216, 255, .035); padding: 9px 10px;
+    font-size: 11px; line-height: 1.5; color: #b7d3e4;
+  }
+  .flow .step b { display: block; font-family: var(--mono); font-size: 9px; letter-spacing: .08em; color: var(--cyan); margin-bottom: 3px; }
+  .flow .arrow { align-self: center; color: rgba(112, 216, 255, .45); font-family: var(--mono); }
+  pre.schema {
+    margin: 0; padding: 12px 14px; overflow: auto;
+    border: 1px solid rgba(112, 216, 255, .10); border-radius: 8px;
+    background: rgba(4, 12, 20, .6);
+    font-family: var(--mono); font-size: 10.5px; line-height: 1.6; color: #a9c6d8;
+  }
+  pre.schema .k { color: var(--cyan); }
+  pre.schema .n { color: var(--amber); }
+  pre.schema .s { color: #9fe0b8; }
+  .rules-list { display: grid; gap: 8px; margin: 14px 0 0; }
+  .rules-list div { display: grid; grid-template-columns: 56px 1fr; gap: 8px; font-size: 11.5px; color: #a9c6d8; }
+  .rules-list b { font-family: var(--mono); font-size: 9px; color: var(--cyan); letter-spacing: .06em; padding-top: 1px; white-space: nowrap; }
+  .rules-list span b { color: var(--paper); font-family: var(--sans); font-size: 11.5px; letter-spacing: 0; }
+  .checklist { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px; margin-top: 14px; }
+  .checklist div { display: grid; grid-template-columns: 12px 1fr; gap: 8px; font-size: 11.5px; color: #a9c6d8; }
+  .checklist i { width: 9px; height: 9px; border: 1px solid rgba(112, 216, 255, .45); margin-top: 4px; }
+  .notdo { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+  .notdo span {
+    font-family: var(--mono); font-size: 9.5px; color: var(--muted);
+    border: 1px solid rgba(126, 176, 206, .18); border-radius: 999px; padding: 3px 8px;
+  }
+  .footnote { margin-top: 46px; padding-top: 18px; border-top: 1px solid rgba(112, 216, 255, .10); display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; font-family: var(--mono); font-size: 10px; letter-spacing: .06em; color: rgba(126, 176, 206, .7); }
+
+  @keyframes flash {
+    0% { transform: scale(1); filter: brightness(1); }
+    18% { transform: scale(1.045); filter: brightness(1.5); }
+    100% { transform: scale(1); filter: brightness(1); }
+  }
+  .record-inline.flash .rvalue, .band-cell.flash .bvalue { animation: flash .9s cubic-bezier(.2, .8, .2, 1); }
+  @keyframes flashEvent {
+    0% { color: rgba(126, 176, 206, .86); text-shadow: none; }
+    30% { color: var(--cyan-bright); text-shadow: 0 0 8px rgba(178, 238, 255, .6); }
+    100% { color: rgba(126, 176, 206, .86); text-shadow: none; }
+  }
+  .last-event.flash { animation: flashEvent .9s ease-out; }
+  .controls button:disabled { opacity: .5; cursor: default; }
+  @keyframes railpulse {
+    0%, 100% { box-shadow: 0 0 5px rgba(178, 238, 255, .55); }
+    35% { box-shadow: 0 0 12px rgba(178, 238, 255, .95), 0 0 22px rgba(112, 216, 255, .55); }
+  }
+  .credits-widget.pulse .record-rail i.peak { animation: railpulse .9s ease-out 2; }
+
+  @media (max-width: 1200px) {
+    .hero { grid-template-columns: 1fr; gap: 26px; }
+    .state-grid { grid-template-columns: repeat(3, 1fr); }
+    .spec-grid { grid-template-columns: 1fr; }
+    .legend { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 760px) {
+    .page { padding: 18px 16px 48px; }
+    .state-grid { grid-template-columns: 1fr 1fr; }
+    .legend { grid-template-columns: 1fr; }
+    .checklist { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body data-variant="a">
+<div class="page">
+
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span> DESKBOARD <span>/</span> <b>CREDITS</b></div>
+    <div class="badge">DESIGN DRAFT · 未改产品代码</div>
+  </header>
+
+  <section class="hero">
+    <div>
+      <div class="eyebrow">90D MAX · FOUR PLATFORMS · INDEPENDENT</div>
+      <h1>90 天<br><em>总积分纪录</em></h1>
+      <p>左上角签到小组件新增一行「90 天最高」，状态行右侧同时给出最后一次签到/领取的日期。每个平台记录自己的<b>总积分（余额）</b>在最近 90 个北京时间自然日里的最高值——四个槽各算各的，<b>不相加、不比较</b>。</p>
+    </div>
+    <div class="rules">
+      <div class="rule"><b>01</b><span>口径</span><em>和槽内大数字同源：当前总积分余额</em></div>
+      <div class="rule"><b>02</b><span>窗口</span><em>最近 90 个北京时间自然日，逐日取最大</em></div>
+      <div class="rule"><b>03</b><span>诚实</span><em>不足 90 天写「N天最高」；没数据写「—」</em></div>
+      <div class="rule"><b>04</b><span>最新事件</span><em>状态行右侧写最后一次签到/领取日期</em></div>
+    </div>
+  </section>
+
+  <section class="lab">
+    <div class="lab-head">
+      <div class="lab-title">组件实拍模拟 <span>700×132 · 舞台 2× 自适应</span></div>
+      <div class="controls">
+        <button id="btnA" class="on" data-variant="a">A · 槽内记录行</button>
+        <button id="btnB" data-variant="b">B · 底部记录带</button>
+        <button id="btnNew">模拟新高</button>
+        <button id="btnCheckIn">模拟今日签到（Trae）</button>
+        <button id="btnRail">记录尺 开</button>
+      </div>
+    </div>
+
+    <div class="stage" id="stage">
+      <div class="stage-marker"><i></i> DESKTOP · TOP-LEFT · 默认位</div>
+      <div class="widget-shell" id="widgetShell">
+        <div class="credits-widget" id="widget">
+          <span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>
+
+          <!-- MiniMax -->
+          <div class="tile">
+            <div class="tile-head">
+              <span class="led"></span>
+              <span class="name">MiniMax</span>
+              <span class="pill">签到</span>
+            </div>
+            <div class="plan">EXPLORE · 独立 OAuth</div>
+            <div class="balance">14,817 <span class="unit">积分</span></div>
+            <div class="status"><span class="status-text">已签 +1,000</span><span class="last-event">最近签到 11/7</span></div>
+            <div class="record-inline">
+              <span class="rlabel">90天最高</span>
+              <span class="rvalue">16,200</span>
+              <span class="runit">积分</span>
+              <span class="rdate">9/14</span>
+            </div>
+            <div class="record-rail" data-rail="minimax"></div>
+            <div class="rule-line"></div>
+            <div class="tile-foot">
+              <span class="cycle"><i class="on"></i><i class="on"></i><i class="on"></i><i class="ring"></i><i></i><i></i><i></i></span>
+              <span class="foot-text">本轮 4/7 · 明日 +400</span>
+            </div>
+          </div>
+
+          <!-- Trae -->
+          <div class="tile">
+            <div class="tile-head">
+              <span class="led amber" id="traeLed"></span>
+              <span class="name">Trae</span>
+              <span class="pill amber" id="traePill">签到</span>
+            </div>
+            <div class="plan">PRO · <span class="warn">不自动续期</span></div>
+            <div class="balance">3,240 <span class="unit">积分</span></div>
+            <div class="status amber" id="traeStatus"><span class="status-text" id="traeStatusText">待签 +100</span><span class="last-event" id="traeLastEvent">最近签到 11/6</span></div>
+            <div class="record-inline">
+              <span class="rlabel">63天最高</span>
+              <span class="rvalue">3,420</span>
+              <span class="runit">积分</span>
+              <span class="rdate">9/28</span>
+            </div>
+            <div class="record-rail" data-rail="trae"></div>
+            <div class="rule-line"></div>
+            <div class="tile-foot">
+              <span class="loginbar"><i></i></span>
+              <span class="foot-text">登录态 22 天</span>
+            </div>
+          </div>
+
+          <!-- WorkBuddy -->
+          <div class="tile">
+            <div class="tile-head">
+              <span class="led"></span>
+              <span class="name">WorkBuddy</span>
+              <span class="pill">签到</span>
+            </div>
+            <div class="plan">国内版 · 浏览器登录</div>
+            <div class="balance">860 <span class="unit">积分</span></div>
+            <div class="status"><span class="status-text">已签 +100</span><span class="last-event">最近签到 11/7</span></div>
+            <div class="record-inline">
+              <span class="rlabel">90天最高</span>
+              <span class="rvalue">1,900</span>
+              <span class="runit">积分</span>
+              <span class="rdate">9/3</span>
+            </div>
+            <div class="record-rail" data-rail="workbuddy"></div>
+            <div class="rule-line"></div>
+            <div class="tile-foot">
+              <span class="cycle"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></span>
+              <span class="foot-text">连签 3 天 · 明日 +100</span>
+            </div>
+          </div>
+
+          <!-- Qoder -->
+          <div class="tile qoder">
+            <div class="tile-head">
+              <span class="led"></span>
+              <span class="name">Qoder</span>
+              <span class="pill">签到</span>
+            </div>
+            <div class="plan">Qoder CN · 个人标准版 · PT</div>
+            <div class="balance">1,200 <span class="unit">Credits</span></div>
+            <div class="status"><span class="status-text">已领 +100</span><span class="last-event">最近领取 11/7</span></div>
+            <div class="record-inline new" id="qoderRecord">
+              <span class="rlabel">90天最高</span>
+              <span class="tri"></span>
+              <span class="rvalue">1,200</span>
+              <span class="runit">Credits</span>
+              <span class="rdate">今天</span>
+            </div>
+            <div class="record-rail" data-rail="qoder"></div>
+            <div class="rule-line"></div>
+            <div class="tile-foot">
+              <span class="claim"><span class="chip">1 项活动</span><span class="dot"></span></span>
+              <span class="foot-text">已领 · 明日 10:00 刷新</span>
+            </div>
+          </div>
+
+          <!-- 方案 B 的底部记录带 -->
+          <div class="record-band" id="recordBand">
+            <div class="band-cell"><span class="blabel">90天最高</span><span class="bvalue">16,200</span><span class="bunit">积分</span><span class="bdate">9/14</span></div>
+            <div class="band-cell"><span class="blabel">63天最高</span><span class="bvalue">3,420</span><span class="bunit">积分</span><span class="bdate">9/28</span></div>
+            <div class="band-cell"><span class="blabel">90天最高</span><span class="bvalue">1,900</span><span class="bunit">积分</span><span class="bdate">9/3</span></div>
+            <div class="band-cell new" id="bandQoder"><span class="blabel">90天最高</span><span class="bvalue">1,200</span><span class="bunit">Credits</span><span class="bdate">今天</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage-note">
+        <span>真实组件用桌面壁纸采样玻璃底；此稿用 CSS 复刻同一套玻璃、四角准星和色板。</span>
+        <span><b>记录行 / 最近签到只读</b> · 拖动/单击/双击行为不变</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="legend">
+    <article>
+      <div class="no">01</div>
+      <h3>每槽独立一行</h3>
+      <p>「90天最高 16,200 积分 · 9/14」。标签、数值、日期各槽各算，不跨平台合计。</p>
+    </article>
+    <article>
+      <div class="no">02</div>
+      <h3>峰值日期</h3>
+      <p>右侧写峰值发生的那一天；今天破纪录改写成「今天」并转青色。</p>
+    </article>
+    <article>
+      <div class="no">03</div>
+      <h3>90 格记录尺</h3>
+      <p>一格一天。空缺 = 那天没采到；亮格 = 峰值日；琥珀 = 今天。它同时替代原来的 1pt 分隔线。</p>
+    </article>
+    <article>
+      <div class="no">04</div>
+      <h3>不足 90 天照实写</h3>
+      <p>只攒到 63 天就写「63天最高」，不冒充 90 天；没有数据写「—」，不印假 0。</p>
+    </article>
+    <article>
+      <div class="no">05</div>
+      <h3>最新签到事件</h3>
+      <p>状态行右侧写该平台最后一次成功签到/领取的日期；今天签完立刻从 11/6 变成 11/7。授权/错误态隐藏，完整日期在悬停详情里。</p>
+    </article>
+  </section>
+
+  <section class="block">
+    <div class="section-head">
+      <h2>同一行的五种状态</h2>
+      <span>STATE MATRIX · 逐槽独立</span>
+    </div>
+    <div class="state-grid">
+      <article class="state-card">
+        <span class="state-chip">正常</span>
+        <div class="demo-record">
+          <span class="rlabel">90天最高</span><span class="rvalue">16,200</span><span class="runit">积分</span><span class="rdate">9/14</span>
+        </div>
+        <div class="demo-rail" data-mini="normal"></div>
+        <p>当前余额低于峰值：显示峰值 + 峰值日期。当前余额仍是大数字，记录行是第二读数。</p>
+      </article>
+      <article class="state-card">
+        <span class="state-chip">新高</span>
+        <div class="demo-record new">
+          <span class="rlabel">90天最高</span><span class="tri"></span><span class="rvalue">1,200</span><span class="runit">Credits</span><span class="rdate">今天</span>
+        </div>
+        <div class="demo-rail" data-mini="new"></div>
+        <p>当前余额超过窗口内最高：数值转为青色高亮，日期写「今天」，播 0.9s 闪动；当天只播一次。</p>
+      </article>
+      <article class="state-card">
+        <span class="state-chip amber">记录不足</span>
+        <div class="demo-record">
+          <span class="rlabel">63天最高</span><span class="rvalue">3,420</span><span class="runit">积分</span><span class="rdate">9/28</span>
+        </div>
+        <div class="demo-rail" data-mini="partial"></div>
+        <p>历史不满 90 天：标签改成「63天最高」。左边的空刻度就是还没开始记录的日子。</p>
+      </article>
+      <article class="state-card">
+        <span class="state-chip dim">无数据</span>
+        <div class="demo-record">
+          <span class="rlabel">90天最高</span><span class="rvalue">—</span><span class="runit">积分</span><span class="rdate">—</span>
+        </div>
+        <div class="demo-rail" data-mini="empty"></div>
+        <p>已接入但余额未知：记录和最近签到都写「—」。绝不把未知写成 0，也不拿 0 去冒充“曾经的最低”。</p>
+      </article>
+      <article class="state-card">
+        <span class="state-chip dim">未接入</span>
+        <div class="demo-off"><i></i> 待接入 · 无记录行</div>
+        <div style="height:8px"></div>
+        <p>未接入的槽不画记录行和记录尺，也不显示最近签到，槽内仍是「待接入」。接入成功后的第一次同步才开始攒。</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="section-head">
+      <h2>版面与数据</h2>
+      <span>IMPLEMENTATION NOTES · 设计阶段</span>
+    </div>
+    <div class="spec-grid">
+      <div class="panel">
+        <h3>版面 <span>LAYOUT · 700×132 不变</span></h3>
+        <table class="spec">
+          <tr><th>元素</th><th>位置（槽内坐标）</th><th>规格</th></tr>
+          <tr><td><b>主读数</b></td><td>y 35–59</td><td>22pt 不动；记录行不抢主读数的层级</td></tr>
+          <tr><td><b>最新签到</b></td><td>y 64–75（状态行右侧）</td><td>7.2pt；Qoder 写「最近领取」，其余「最近签到」；授权/错误态隐藏</td></tr>
+          <tr><td><b>记录行</b></td><td>y 79–88</td><td>标签 6.2pt / 数值 8.8pt / 日期 6.2pt</td></tr>
+          <tr><td><b>记录尺</b></td><td>y 89.5–93.5</td><td>90 格，一格一天；峰值格 4pt 高；今天格琥珀</td></tr>
+          <tr><td><b>原分隔线</b></td><td>y 92</td><td>有记录尺时省略；关闭记录尺时恢复 1pt</td></tr>
+          <tr><td><b>底栏</b></td><td>y 97–107</td><td>保持现状：轮次点 / 登录态条 / 连签点 / 活动牌</td></tr>
+        </table>
+        <div class="rules-list">
+          <div><b>不增高</b><span>组件仍是 <b>700×132</b>；槽内只借用「今日结果」与底栏之间的 22pt 留白。</span></div>
+          <div><b>不抢点击</b><span>记录行和记录尺都不注册命中区；单击/双击/拖动仍落在原来的槽或药丸上。</span></div>
+          <div><b>最新事件</b><span>状态行右侧只由成功签到/领取更新；今天签完从 11/6 变 11/7，不跟余额刷新走。</span></div>
+          <div><b>未接入不占位</b><span>未接入槽不画记录行、记录尺和最近签到，避免三行「—」把首次启动的画面弄脏。</span></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>数据 <span>DATA · 只记余额，不碰令牌</span></h3>
+        <div class="flow">
+          <div class="step"><b>01 同步</b>启动 / 手动 / 每小时 tick / 签到后，拿到余额</div>
+          <div class="arrow">→</div>
+          <div class="step"><b>02 取当日最大</b>同一北京时间自然日，多次采样取最大值</div>
+          <div class="arrow">→</div>
+          <div class="step"><b>03 求窗口峰值</b>最近 90 个日桶里取 max；并列保留最早那天</div>
+          <div class="arrow">→</div>
+          <div class="step"><b>04 渲染</b>记录行 + 记录尺；新高才播一次闪动</div>
+        </div>
+        <pre class="schema"><span class="k">"platforms"</span>: {
+  <span class="k">"minimax"</span>: {
+    <span class="k">"account"</span>: <span class="s">"mm_ab12…"</span>,
+    <span class="k">"lastCheckIn"</span>: { <span class="k">"d"</span>: <span class="s">"2026-11-07"</span>, <span class="k">"amount"</span>: <span class="n">1000</span> },
+    <span class="k">"days"</span>: [
+      { <span class="k">"d"</span>: <span class="s">"2026-09-14"</span>, <span class="k">"max"</span>: <span class="n">16200</span>, <span class="k">"n"</span>: <span class="n">3</span> },
+      { <span class="k">"d"</span>: <span class="s">"2026-11-07"</span>, <span class="k">"max"</span>: <span class="n">14817</span>, <span class="k">"n"</span>: <span class="n">2</span> }
+    ]
+  },
+  <span class="k">"qoder"</span>: {
+    <span class="k">"lastCheckIn"</span>: { <span class="k">"d"</span>: <span class="s">"2026-11-07"</span>, <span class="k">"amount"</span>: <span class="n">100</span> },
+    <span class="k">"days"</span>: [ <span class="s">"…"</span> ]
+  }
+}</pre>
+        <div class="rules-list">
+          <div><b>只留 90</b><span>每个平台只保留最近 90 个日桶；更早的峰值滚出窗口后自然失效，不悄悄算外卡。</span></div>
+          <div><b>换号分档</b><span>能拿到 uid 的平台按 uid 分档；换号从今天重新开始，记录和最近签到都重置。</span></div>
+          <div><b>最新事件</b><span>只由成功签到/领取更新（幂等“已签”按成功算）；失败不更新。日期不受 90 天窗口裁剪，超过 90 天仍显示实际日期。</span></div>
+          <div><b>不回填</b><span>接口只给今天/本轮/7 天，拿不到 90 天历史；从安装这版开始攒，第一天就是「1天最高」。</span></div>
+          <div><b>落盘</b><span><code>Credits/records.json</code>，原子写 + <code>.bak</code>；只有余额、日期和最近签到，不含 token，不联网。</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="section-head">
+      <h2>验收与边界</h2>
+      <span>ACCEPTANCE · 设计通过后再实现</span>
+    </div>
+    <div class="spec-grid">
+      <div class="panel">
+        <h3>验收清单 <span>VERIFY</span></h3>
+        <div class="checklist">
+          <div><i></i><span>四个槽各自返回独立的记录值；改一个不影响另外三个。</span></div>
+          <div><i></i><span>记录值与大数字同源同单位；Qoder 写 Credits，其余写积分。</span></div>
+          <div><i></i><span>覆盖 90 天才写「90天最高」；63 天写「63天最高」。</span></div>
+          <div><i></i><span>未知余额写「—」；未接入槽不画记录行。</span></div>
+          <div><i></i><span>当前余额 &gt; 窗口最高 → 新高态，日期「今天」。</span></div>
+          <div><i></i><span>并列最高保留最早日期；不重复播新高动效。</span></div>
+          <div><i></i><span>峰值滚出 90 天 → 数值回落到窗口内最高，不播新高。</span></div>
+          <div><i></i><span>记录行/记录尺不改变命中测试、拖动和双击。</span></div>
+          <div><i></i><span>文件读写往返 90 天；旧桶裁剪；坏文件不崩。</span></div>
+          <div><i></i><span>北京时间 23:59 → 00:00 正确翻日，旧的一天滚出。</span></div>
+          <div><i></i><span>组件仍为 700×132；槽内元素无重叠、无截断。</span></div>
+          <div><i></i><span>四档外观（Plate / Feather / HUD / Bare）都可读。</span></div>
+          <div><i></i><span>四个槽各自显示最后一次成功签到/领取日期；Qoder 文案是「最近领取」。</span></div>
+          <div><i></i><span>最近签到日期不受 90 天窗口影响；超过 90 天仍显示实际日期。</span></div>
+          <div><i></i><span>签到失败不更新；幂等已签按成功算；今天签完从 11/6 变 11/7。</span></div>
+          <div><i></i><span>授权/错误态隐藏右侧日期，状态文字不被截断；完整日期仍在悬停详情。</span></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>这版不做什么 <span>NON-GOALS</span></h3>
+        <div class="rules-list">
+          <div><b>不合计</b><span>不做「四平台总积分」——积分和 Credits 不是同一把尺，跨平台相加没有意义。</span></div>
+          <div><b>不排名</b><span>四个记录不互相比较，只和该平台自己的过去比。</span></div>
+          <div><b>不监控</b><span>不逐秒轮询余额；采样点就是现有的同步时机，峰值是“采样到的最高”，不虚构。</span></div>
+          <div><b>不新增入口</b><span>不加按钮、不加菜单项、不改点击/拖动；记录行只读。</span></div>
+        </div>
+        <div class="notdo">
+          <span>不加抬头</span><span>不加表尾</span><span>不加弹窗</span><span>不加网络请求</span><span>不改 700×132</span><span>不做跨平台总分</span>
+        </div>
+        <div class="rules-list" style="margin-top:18px">
+          <div><b>下一步</b><span>确认口径与位置后：数据层 <code>credits_record.{h,m}</code> → 槽模型加 record / lastCheckIn 只读字段 → <code>credits_view.m</code> 绘制 → <code>verify_credits</code> 断言 → <code>preview_credits</code> 四态图（含最近签到）。</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footnote">
+    <span>DESKBOARD / CREDITS · 90D MAX · DESIGN DRAFT · 2026-11-07</span>
+    <span>仅设计稿；未修改任何产品代码</span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  const RAILS = {
+    minimax:   { coverage: 90, peak: 35, today: 89 },
+    trae:      { coverage: 63, peak: 49, today: 89 },
+    workbuddy: { coverage: 90, peak: 24, today: 89 },
+    qoder:     { coverage: 90, peak: 89, today: 89 }
+  };
+  const TOTAL = 90;
+
+  function buildRail(el, spec) {
+    if (!el) return;
+    el.innerHTML = "";
+    const start = TOTAL - spec.coverage;
+    for (let i = 0; i < TOTAL; i++) {
+      const tick = document.createElement("i");
+      if (i < start) tick.classList.add("gap");
+      if (i === spec.peak) tick.classList.add("peak");
+      if (i === spec.today) tick.classList.add("today");
+      el.appendChild(tick);
+    }
+  }
+
+  Object.keys(RAILS).forEach(function (key) {
+    buildRail(document.querySelector('[data-rail="' + key + '"]'), RAILS[key]);
+  });
+
+  function buildMini(el, kind) {
+    const n = 30;
+    const specs = {
+      normal:  { peak: 12, today: 29, gaps: 0 },
+      new:     { peak: 29, today: 29, gaps: 0 },
+      partial: { peak: 16, today: 29, gaps: 9 },
+      empty:   { peak: -1, today: -1, gaps: 30 },
+      off:     { peak: -1, today: -1, gaps: 30 }
+    };
+    const spec = specs[kind];
+    for (let i = 0; i < n; i++) {
+      const tick = document.createElement("i");
+      if (i < spec.gaps) tick.classList.add("gap");
+      if (i === spec.peak) tick.classList.add("peak");
+      if (i === spec.today) tick.classList.add("today");
+      el.appendChild(tick);
+    }
+  }
+  document.querySelectorAll("[data-mini]").forEach(function (el) {
+    buildMini(el, el.getAttribute("data-mini"));
+  });
+
+  const stage = document.getElementById("stage");
+  const shell = document.getElementById("widgetShell");
+  const widget = document.getElementById("widget");
+  const btnA = document.getElementById("btnA");
+  const btnB = document.getElementById("btnB");
+  const btnNew = document.getElementById("btnNew");
+  const btnCheckIn = document.getElementById("btnCheckIn");
+  const btnRail = document.getElementById("btnRail");
+  const qoderRecord = document.getElementById("qoderRecord");
+  const bandQoder = document.getElementById("bandQoder");
+  const traeStatus = document.getElementById("traeStatus");
+  const traeStatusText = document.getElementById("traeStatusText");
+  const traePill = document.getElementById("traePill");
+  const traeLed = document.getElementById("traeLed");
+  const traeLast = document.getElementById("traeLastEvent");
+
+  function fit() {
+    const available = Math.max(280, stage.clientWidth - 48);
+    const s = Math.min(2, available / 700);
+    widget.style.transform = "scale(" + s + ")";
+    shell.style.width = (700 * s) + "px";
+    shell.style.height = (widget.offsetHeight * s) + "px";
+  }
+
+  function setVariant(v) {
+    document.body.setAttribute("data-variant", v);
+    btnA.classList.toggle("on", v === "a");
+    btnB.classList.toggle("on", v === "b");
+    requestAnimationFrame(fit);
+  }
+
+  btnA.addEventListener("click", function () { setVariant("a"); });
+  btnB.addEventListener("click", function () { setVariant("b"); });
+
+  btnRail.addEventListener("click", function () {
+    const off = document.body.classList.toggle("rail-off");
+    btnRail.textContent = off ? "记录尺 关" : "记录尺 开";
+    btnRail.classList.toggle("on", !off);
+  });
+
+  function flashNewHigh() {
+    [qoderRecord, bandQoder].forEach(function (el) {
+      if (!el) return;
+      el.classList.remove("flash");
+      void el.offsetWidth;
+      el.classList.add("flash");
+    });
+    widget.classList.remove("pulse");
+    void widget.offsetWidth;
+    widget.classList.add("pulse");
+    setTimeout(function () {
+      widget.classList.remove("pulse");
+    }, 1900);
+  }
+
+  btnNew.addEventListener("click", flashNewHigh);
+
+  function simulateCheckIn() {
+    if (!traeStatus) return;
+    traeStatus.classList.remove("amber");
+    traeStatusText.textContent = "已签 +100";
+    traePill.classList.remove("amber");
+    traePill.textContent = "签到";
+    traeLed.classList.remove("amber");
+    traeLast.textContent = "最近签到 11/7";
+    traeLast.classList.remove("flash");
+    void traeLast.offsetWidth;
+    traeLast.classList.add("flash");
+    btnCheckIn.textContent = "已签到 · 11/7";
+    btnCheckIn.disabled = true;
+  }
+
+  btnCheckIn.addEventListener("click", simulateCheckIn);
+
+  window.addEventListener("resize", fit);
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(fit);
+  }
+
+  const params = new URLSearchParams(location.search);
+  if (params.get("variant") === "b") setVariant("b");
+  if (params.get("rail") === "off") {
+    document.body.classList.add("rail-off");
+    btnRail.textContent = "记录尺 关";
+    btnRail.classList.add("on");
+  }
+  if (params.get("new") === "1") {
+    setTimeout(flashNewHigh, 350);
+  }
+  if (params.get("checkin") === "1") {
+    setTimeout(simulateCheckIn, 350);
+  }
+  requestAnimationFrame(fit);
+})();
+</script>
+</body>
+</html>

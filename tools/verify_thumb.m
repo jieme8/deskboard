@@ -47,6 +47,18 @@ static NSString *MakeProbeImage(CGFloat w, CGFloat h) {
                             [NSColor colorWithSRGBRed:0.69 green:0.60 blue:0.97 alpha:1.0]);
 }
 @end
+
+// 数真实重绘帧数：needsDisplay 标志在窗口没显示过时清不掉，拿它断言会假绿，
+// 只有 AppKit 真的又调了一次 drawRect 才证明"换图 → 重绘"这条链通了
+@interface PreviewDrawProbe : DeskVaultPreviewView
+@property (nonatomic, assign) NSInteger draws;
+@end
+@implementation PreviewDrawProbe
+- (void)drawRect:(NSRect)r {
+    self.draws++;
+    [super drawRect:r];
+}
+@end
 @implementation ThumbProbeView
 - (BOOL)isFlipped { return YES; }
 - (void)drawRect:(NSRect)d {
@@ -486,6 +498,41 @@ int main(void) { @autoreleasepool {
             Check(fired == nil || fired.length == 0, @"移开后回调要关预览");
             Check([[tv valueForKey:@"_previewK"] doubleValue] == 0.0, @"关闭也是立即置 0");
         }
+    }
+
+    // —— 预览浮窗视图：换图必须真的重绘 ——
+    // 用户报过"悬停不同图片显示的都是同一张"。库里三张图是同一尺寸（1440×2560），
+    // 算出来的预览窗矩形完全相同，生产路径不会 setFrame: 触发重绘；
+    // 视图若只换 image 不标脏，窗口就停在第一张。
+    // 不能拿 needsDisplay 断言：窗口没显示过时 setNeedsDisplay:NO 清不掉这个标志，
+    // 断言会假绿（实测过）。只有数到 AppKit 真的又画了一帧才算数。
+    {
+        NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 24, 18)
+                                                  styleMask:NSWindowStyleMaskBorderless
+                                                    backing:NSBackingStoreBuffered
+                                                      defer:NO];
+        w.alphaValue = 0.0;    // 完全透明，校验脚本不在桌面上闪窗
+        PreviewDrawProbe *pv = [[PreviewDrawProbe alloc] initWithFrame:NSMakeRect(0, 0, 24, 18)];
+        w.contentView = pv;
+        [w orderFrontRegardless];
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.25]];
+        NSInteger d0 = pv.draws;
+        Check(d0 > 0, @"探针窗口先真的画过一帧（重绘计数的前提）");
+
+        pv.image = [[NSImage alloc] initWithSize:NSMakeSize(20, 20)];
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.15]];
+        NSInteger d1 = pv.draws;
+        Check(d1 == d0 + 1, @"第一次换图要重绘");
+
+        pv.image = [[NSImage alloc] initWithSize:NSMakeSize(20, 20)];
+        pv.frame = NSMakeRect(0, 0, 24, 18);   // 生产路径每次都会重设同尺寸 frame
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.15]];
+        Check(pv.draws == d1 + 1,
+              @"再换一张同尺寸图也要重绘（三张 1440×2560 的图就卡在这里）");
+
+        pv.tint = [NSColor systemRedColor];
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.15]];
+        Check(pv.draws == d1 + 2, @"换描边色也要重绘");
     }
 
     printf("\n缩略图校验：%d 项通过，%d 项失败\n", gPass, gFail);

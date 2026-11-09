@@ -1,0 +1,11 @@
+{
+  "code": 0,
+  "msg": "OK",
+  "data": {
+    "accessToken": "eyJhbGciOiJub25lIn0.eyJpc3MiOiJodHRwczovL3d3dy5jb2RlYnVkZHkuY24iLCJzdWIiOiJ3Yi10ZXN0LXVpZCIsImV4cCI6NDEwMjQ0NDgwMCwibmFtZSI6IndiLXRlc3RlciJ9.sig",
+    "refreshToken": "rt-test",
+    "expiresIn": 2592000,
+    "refreshExpiresIn": 5184000,
+    "domain": "www.codebuddy.cn"
+  }
+}

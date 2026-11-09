@@ -52,14 +52,13 @@ int main(void) {
         }
         DeskMonitorView *v = [[DeskMonitorView alloc] initWithRows:rows];
         v.totalCPU = 11.1; v.totalMemUsed = 18e9; v.totalMemPhys = 26e9; v.totalEnergy = 191.0;
-        v.procCount = 8;
         v.onLog = ^(NSString *msg) { if ([msg containsString:@"收到拖拽事件"]) gDrag++; };
         w.contentView = v;
         [w orderFrontRegardless];
         Spin(NSApp, 20);
 
         printf("窗口 key=%d visible=%d 层级=%d\n", w.isKeyWindow, w.isVisible, (int)w.level);
-        // 按在空白处（榜头那一行，避开进程行免得走双击分支）
+        // 按在顶部留白处（避开进程行免得走双击分支）
         NSPoint at = NSMakePoint(200, kMonitorViewHeight - 8);
         [NSApp postEvent:MouseEvent(NSEventTypeLeftMouseDown, at, w.windowNumber, 1) atStart:NO];
         Spin(NSApp, 20);

@@ -1,0 +1,15 @@
+{
+  "is_credits_billing": true,
+  "is_dollar_usage_billing": false,
+  "usage_summary": {
+    "consumed_amount": 17.31,
+    "consumption_ratio": 0.00509,
+    "total_amount": 3400
+  },
+  "user_entitlement_pack_list": [
+    {
+      "display_desc": "\u514d\u8d39",
+      "expire_time": 1793462399
+    }
+  ]
+}

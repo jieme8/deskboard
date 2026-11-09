@@ -1,0 +1,781 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23060d16'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%2334D058' stroke-width='3'/%3E%3C/svg%3E">
+<title>DeskBoard · 电池 BATT · 四环视觉稿</title>
+<style>
+:root{
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",Arial,sans-serif;
+  --mono:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Monaco,monospace;
+  --cyan:#70D8FF; --cyan-b:#B2EEFF; --paper:#E2F6FF; --muted:#7EB0CE;
+  --ink:#0A1A2A;
+  --ok:#34D058; --ok-soft:#86E0BF; --amber:#FFB26B; --red:#FF6B5E;
+  --ui:#CFE6F2; --ui-muted:#8FB0C4;
+  --card-w:364px; --card-h:140px;
+  --ring:64px; --ring-gap:18px; --side:27px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{
+  font-family:var(--font);color:var(--ui);
+  background:
+    radial-gradient(120% 80% at 18% 0%, rgba(38,86,130,.50), rgba(6,16,30,0) 55%),
+    radial-gradient(90% 70% at 88% 10%, rgba(74,58,128,.28), rgba(6,16,30,0) 60%),
+    linear-gradient(165deg,#081726 0%,#050d18 52%,#03080f 100%);
+  background-attachment:fixed;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:geometricPrecision;
+}
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:
+    linear-gradient(rgba(112,216,255,.030) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(112,216,255,.030) 1px,transparent 1px);
+  background-size:48px 48px;
+  mask-image:radial-gradient(120% 90% at 50% 0%,#000 20%,transparent 78%);
+  -webkit-mask-image:radial-gradient(120% 90% at 50% 0%,#000 20%,transparent 78%);
+}
+.page{position:relative;z-index:1;max-width:1240px;margin:0 auto;padding:0 28px 56px}
+.topbar{
+  position:sticky;top:0;z-index:80;display:flex;flex-wrap:wrap;align-items:center;gap:12px 22px;
+  padding:13px 0;background:rgba(5,13,24,.68);
+  backdrop-filter:blur(18px) saturate(1.1);-webkit-backdrop-filter:blur(18px) saturate(1.1);
+  border-bottom:.5px solid rgba(112,216,255,.14);
+}
+.brand{display:flex;align-items:center;gap:9px;font:600 13px/1.2 var(--font);color:#EDF9FF;letter-spacing:.2px}
+.brand .dot{width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 9px rgba(52,208,88,.9)}
+.brand small{font:500 11px/1 var(--mono);color:#7FA6BC;letter-spacing:.08em}
+.top-hint{font:11px/1.5 var(--font);color:var(--ui-muted)}
+.top-chips{margin-left:auto;display:flex;gap:7px;flex-wrap:wrap}
+.chip{
+  font:600 10px/1 var(--mono);color:#CCEBFA;padding:5px 8px;border-radius:20px;
+  background:rgba(112,216,255,.07);border:.5px solid rgba(112,216,255,.24);white-space:nowrap;
+}
+.chip b{color:#F2FBFF;font-weight:600}
+.chip.green{color:#B9FFCC;background:rgba(52,208,88,.08);border-color:rgba(52,208,88,.28)}
+.chip.warn{color:#FFC7BC;background:rgba(255,107,94,.07);border-color:rgba(255,107,94,.24)}
+
+.hero{padding:36px 0 8px}
+.kicker{font:600 10px/1 var(--mono);letter-spacing:.18em;color:#6E9AB4;text-transform:uppercase}
+h1{margin:10px 0 8px;font:600 30px/1.18 var(--font);letter-spacing:-.02em;color:#F3FBFF}
+.lede{margin:0;max-width:720px;font:13.5px/1.7 var(--font);color:#9FBDCE}
+.lede b{color:#E7F7FF;font-weight:600}
+.lede .ok{color:#A6EBD2;font-weight:600}
+
+.controls{display:flex;gap:14px;flex-wrap:wrap;margin-top:20px}
+.ctl-group{display:flex;align-items:center;gap:4px;padding:5px 7px;border-radius:10px;background:rgba(112,216,255,.045);border:.5px solid rgba(112,216,255,.13)}
+.ctl-label{font:600 9px/1 var(--mono);letter-spacing:.12em;color:#6F94A9;padding:0 5px;text-transform:uppercase}
+.ctl{border:0;background:transparent;color:#A9C7D8;font:500 11px/1 var(--font);padding:7px 10px;border-radius:7px;cursor:pointer;white-space:nowrap;transition:background .15s,color .15s}
+.ctl:hover{background:rgba(112,216,255,.08);color:#EAF8FF}
+.ctl.on{background:rgba(112,216,255,.14);color:#F2FBFF;box-shadow:inset 0 0 0 .5px rgba(112,216,255,.35)}
+.ctl.on.green{background:rgba(52,208,88,.13);color:#B9FFCC;box-shadow:inset 0 0 0 .5px rgba(52,208,88,.36)}
+
+.stage-row{display:flex;gap:28px;align-items:flex-end;flex-wrap:wrap;margin-top:24px}
+.stage{
+  position:relative;flex:1 1 100%;min-height:300px;border-radius:18px;overflow:hidden;
+  background:
+    radial-gradient(95% 120% at 12% 4%, rgba(78,132,168,.42), rgba(6,16,30,0) 58%),
+    radial-gradient(90% 100% at 88% 88%, rgba(112,78,148,.32), rgba(6,16,30,0) 62%),
+    linear-gradient(150deg,#0a1c2e 0%,#061220 48%,#040b14 100%);
+  border:.5px solid rgba(112,216,255,.10);
+  box-shadow:inset 0 0 70px rgba(1,7,15,.55);
+  padding:34px 38px 30px;
+}
+.stage::before{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:
+    radial-gradient(240px 180px at 22% 28%, rgba(160,220,255,.12), transparent 70%),
+    radial-gradient(300px 220px at 78% 76%, rgba(255,176,140,.07), transparent 72%),
+    linear-gradient(115deg, transparent 0 48%, rgba(255,255,255,.035) 49%, transparent 50% 100%);
+}
+.stage::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(120% 90% at 50% 0%,rgba(0,0,0,0),rgba(0,0,0,.34));
+}
+.stage-inner{position:relative;z-index:2;display:flex;gap:40px;align-items:center;justify-content:center;flex-wrap:wrap}
+.true-size{display:flex;flex-direction:column;gap:12px;align-items:flex-start}
+.zoom-wrap{position:relative}
+.zoom{transform:scale(1.8);transform-origin:top left}
+.zoom-slot{width:655px;height:252px;border-radius:12px}
+.caption{font:10.5px/1.5 var(--font);color:#86A9BD;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.caption b{color:#DCEEF9;font-weight:600}
+.caption .mono{font:10px var(--mono);color:#B9D9EA}
+.dim{
+  display:inline-flex;align-items:center;gap:6px;padding:3px 7px;border-radius:5px;
+  background:rgba(112,216,255,.06);border:.5px solid rgba(112,216,255,.18);
+  font:10px/1.4 var(--mono);color:#BBD8E7;white-space:nowrap;
+}
+.dim i{display:inline-block;width:9px;height:1px;background:rgba(112,216,255,.5)}
+
+/* ---------- 电池组件本体 ---------- */
+.battery{
+  position:relative;flex:none;width:var(--card-w);height:var(--card-h);border-radius:20px;
+  isolation:isolate;
+}
+.battery .slots{
+  position:relative;z-index:2;display:flex;gap:var(--ring-gap);
+  padding:26px var(--side) 0;
+}
+.slot{width:var(--ring);display:flex;flex-direction:column;align-items:center;flex:none}
+.ring-wrap{position:relative;width:var(--ring);height:var(--ring);flex:none}
+.ring{display:block;width:var(--ring);height:var(--ring);overflow:visible}
+.ring .track{fill:none;stroke:rgba(255,255,255,.125);stroke-width:5}
+.slot.empty .ring .track{stroke:rgba(255,255,255,.085)}
+.ring .arc{fill:none;stroke-width:5;stroke-linecap:round;transition:stroke-dasharray .45s ease}
+.ring-icon{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  color:#F7FCFF;pointer-events:none;
+}
+.ring-icon svg{width:22px;height:22px;display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.pct{
+  display:block;width:100%;margin-top:6px;text-align:center;
+  font:600 14.5px/1 var(--font);color:#F2FBFF;
+  font-variant-numeric:tabular-nums;letter-spacing:-.01em;white-space:nowrap;
+}
+.bolt{
+  position:absolute;right:-2px;top:-2px;width:18px;height:18px;border-radius:50%;
+  background:#071018;border:1.5px solid rgba(52,208,88,.82);
+  display:flex;align-items:center;justify-content:center;color:#8CFFAB;
+  box-shadow:0 0 10px rgba(52,208,88,.38),0 2px 6px rgba(0,0,0,.5);
+}
+.bolt svg{width:11px;height:11px;fill:currentColor}
+.slot.hot .ring-wrap::after{
+  content:"";position:absolute;inset:-7px;border-radius:50%;pointer-events:none;
+  box-shadow:0 0 0 1px rgba(112,216,255,.45),0 0 22px rgba(112,216,255,.22);
+}
+.empty-hint{
+  position:absolute;left:0;right:0;bottom:11px;z-index:2;text-align:center;
+  font:500 9px/1.2 var(--font);color:rgba(210,238,250,.70);letter-spacing:.03em;
+}
+
+/* 四档外观：和 DeskStyle 同一套语义，电池绿不跟着青色主色走 */
+.battery.style-plate{
+  background:linear-gradient(180deg,rgba(26,30,36,.72) 0%,rgba(14,18,24,.78) 42%,rgba(6,9,14,.86) 100%);
+  border:.5px solid rgba(255,255,255,.17);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.09),
+    inset 0 -22px 44px rgba(0,0,0,.26),
+    0 22px 50px rgba(0,0,0,.50);
+  backdrop-filter:blur(28px) saturate(1.25);
+  -webkit-backdrop-filter:blur(28px) saturate(1.25);
+}
+.battery.style-feather{background:none;border:none;box-shadow:none}
+.battery.style-feather::before{
+  content:"";position:absolute;inset:-34px -28px -30px;z-index:0;border-radius:50%;
+  background:radial-gradient(58% 62% at 50% 52%,rgba(2,7,12,.82) 0%,rgba(2,7,12,.58) 42%,rgba(2,7,12,.20) 68%,rgba(2,7,12,0) 82%);
+  filter:blur(5px);
+}
+.battery.style-bare{background:none;border:none;box-shadow:none}
+.battery.style-bare .ring .track{stroke:rgba(255,255,255,.18)}
+.battery.style-hud{
+  background:linear-gradient(180deg,rgba(10,17,27,.26),rgba(3,7,12,.34));
+  border:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.05);
+  backdrop-filter:blur(18px) saturate(1.2);
+  -webkit-backdrop-filter:blur(18px) saturate(1.2);
+}
+.battery.style-bare .pct,
+.battery.style-hud .pct,
+.battery.style-feather .pct{text-shadow:0 1px 2px rgba(0,0,0,.92)}
+.battery.style-bare .ring-icon svg,
+.battery.style-hud .ring-icon svg,
+.battery.style-feather .ring-icon svg{filter:drop-shadow(0 1px 2px rgba(0,0,0,.9))}
+
+/* ---------- 区块 ---------- */
+.section{margin-top:46px}
+.section-head{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:16px}
+.section-head h2{margin:0;font:600 18px/1.3 var(--font);color:#EDF9FF;letter-spacing:-.01em}
+.section-head p{margin:0;font:12px/1.6 var(--font);color:#8FB0C4;max-width:760px}
+.section-head .rule{flex:1;height:1px;background:linear-gradient(90deg,rgba(112,216,255,.22),rgba(112,216,255,0))}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+@media(max-width:980px){.grid2{grid-template-columns:1fr}}
+@media(max-width:900px){.stage-row{flex-direction:column;align-items:stretch}.zoom-wrap{display:none}}
+.panel{
+  position:relative;border-radius:14px;padding:20px;
+  background:rgba(7,18,32,.55);border:.5px solid rgba(112,216,255,.11);
+  box-shadow:inset 0 0 30px rgba(1,7,15,.4);
+}
+.panel h3{margin:0 0 8px;font:600 13px/1.4 var(--font);color:#E9F8FF}
+.panel p{margin:0;font:12px/1.65 var(--font);color:#93B3C6}
+.panel p+p{margin-top:6px}
+.panel .note{margin-top:10px;font:10.5px/1.6 var(--font);color:#7899AD}
+.panel .note b{color:#BBDCEA;font-weight:600}
+ul.tight{margin:8px 0 0;padding-left:16px}
+ul.tight li{font:12px/1.7 var(--font);color:#9FBDCE;margin:2px 0}
+ul.tight li b{color:#DCEFF9;font-weight:600}
+ul.tight li code{font:10.5px var(--mono);color:#B7DBEC;background:rgba(112,216,255,.07);padding:1px 4px;border-radius:3px}
+
+.style-stage{
+  position:relative;display:flex;align-items:center;justify-content:center;
+  min-height:196px;border-radius:12px;margin-bottom:14px;overflow:hidden;
+  background:
+    radial-gradient(90% 130% at 18% 0%, rgba(80,140,180,.55), transparent 58%),
+    radial-gradient(80% 110% at 88% 100%, rgba(130,86,150,.38), transparent 62%),
+    linear-gradient(155deg,#0d2135 0%,#07111d 58%,#03070d 100%);
+}
+.style-stage::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(110% 90% at 50% 0%,rgba(0,0,0,0),rgba(0,0,0,.30));
+}
+.style-stage .battery{position:relative;z-index:2}
+.state-stage{
+  display:flex;align-items:center;justify-content:center;
+  min-height:184px;border-radius:12px;margin-bottom:14px;overflow:hidden;
+  background:
+    radial-gradient(80% 120% at 12% 0%, rgba(64,116,152,.35), transparent 60%),
+    radial-gradient(80% 100% at 90% 100%, rgba(112,72,132,.25), transparent 62%),
+    linear-gradient(155deg,#0a1b2c 0%,#050d17 62%,#02060b 100%);
+}
+.badge{display:inline-block;padding:2px 6px;border-radius:4px;font:600 9px/1.4 var(--mono);letter-spacing:.04em}
+.badge.keep{background:rgba(112,216,255,.10);border:.5px solid rgba(112,216,255,.26);color:#BDE6F7}
+.badge.drop{background:rgba(255,138,122,.08);border:.5px solid rgba(255,138,122,.26);color:#FFB8AC}
+.badge.new{background:rgba(134,224,191,.09);border:.5px solid rgba(134,224,191,.28);color:#A6EBD2}
+
+/* ---------- 悬停 ---------- */
+.hover-panel{padding:10px 20px}
+.hover-demo{display:flex;gap:30px;align-items:center;flex-wrap:wrap;padding:22px 0}
+.hover-demo + .hover-demo{border-top:.5px solid rgba(112,216,255,.09)}
+.hover-side{display:flex;flex-direction:column;gap:11px;align-items:flex-start}
+.bubble{
+  width:250px;border-radius:12px;padding:13px 14px;flex:none;position:relative;
+  background:rgba(4,18,36,.92);border:.5px solid rgba(112,216,255,.24);
+  box-shadow:0 16px 40px rgba(0,0,0,.5),inset 0 0 25px rgba(2,10,22,.35);
+}
+.bubble::after{
+  content:"";position:absolute;left:-7px;top:74px;width:12px;height:12px;transform:rotate(45deg);
+  background:rgba(4,18,36,.92);border-left:.5px solid rgba(112,216,255,.24);border-bottom:.5px solid rgba(112,216,255,.24);
+}
+.b-name{font:600 13px/1.2 var(--font);color:#F2FBFF;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.b-sub{font:9.5px/1.4 var(--mono);color:#8FB6CB;margin-top:3px;white-space:nowrap}
+.b-hero{display:flex;align-items:baseline;gap:7px;margin-top:9px}
+.b-hero b{font:600 21px/1 var(--mono);color:#8CFFAB;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.b-hero span{font:10px/1.2 var(--font);color:#9FC0D2}
+.b-rows{margin-top:9px;display:grid;grid-template-columns:1fr 1fr;gap:4px 10px}
+.b-row{display:flex;justify-content:space-between;gap:6px;font:9.5px/1.5 var(--font);color:#8FB0C4;border-bottom:.5px solid rgba(112,216,255,.08);padding-bottom:2px}
+.b-row b{font:500 9.5px var(--mono);color:#DDF2FC;white-space:nowrap}
+.b-hist{margin-top:7px;font:9.5px/1.5 var(--font);color:#8FB0C4}
+.b-hist b{font:500 10px var(--mono);color:#B6E7FF}
+.b-foot{margin-top:7px;font:8.5px/1.4 var(--mono);color:#6F94A9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------- 桌面摆位 ---------- */
+.desk-wrap{overflow-x:auto;padding:2px 0}
+.desk{
+  position:relative;width:832px;height:520px;border-radius:14px;overflow:hidden;flex:none;
+  background:
+    radial-gradient(70% 90% at 18% 6%, rgba(80,136,168,.45), transparent 58%),
+    radial-gradient(70% 90% at 88% 92%, rgba(100,66,120,.35), transparent 64%),
+    linear-gradient(155deg,#0c1e30 0%,#06101b 58%,#03070d 100%);
+  border:.5px solid rgba(112,216,255,.12);
+}
+.desk-canvas{position:absolute;left:0;top:0;width:1512px;height:945px;transform:scale(.55);transform-origin:top left}
+.desk-menubar{position:absolute;left:0;top:0;width:1512px;height:24px;background:rgba(3,8,14,.62);border-bottom:.5px solid rgba(255,255,255,.06)}
+.dw{position:absolute;border-radius:16px;padding:18px 20px;display:flex;flex-direction:column;gap:6px}
+.dw b{font:600 21px/1.15 var(--font);color:#EAF8FF;letter-spacing:-.01em}
+.dw span{font:500 16px/1.2 var(--mono);color:rgba(200,232,248,.70)}
+.dw.cyan{border:1px dashed rgba(112,216,255,.45);background:rgba(112,216,255,.055)}
+.dw.new{border:1px solid rgba(52,208,88,.78);background:rgba(52,208,88,.075);box-shadow:0 0 34px rgba(52,208,88,.12)}
+.dw.new b{color:#B9FFCC}
+.dw .tag{position:absolute;right:14px;top:14px;font:600 15px/1 var(--mono);letter-spacing:.08em;color:#B9FFCC;background:rgba(52,208,88,.12);border:.5px solid rgba(52,208,88,.35);padding:4px 7px;border-radius:6px}
+.desk-caption{margin-top:10px;font:10.5px/1.6 var(--font);color:#7899AD}
+.desk-caption b{color:#BBDCEA;font-weight:600}
+
+/* ---------- 规格 ---------- */
+table.spec{width:100%;border-collapse:collapse;font:11.5px/1.6 var(--font)}
+table.spec th,table.spec td{text-align:left;vertical-align:top;padding:8px 10px;border-bottom:.5px solid rgba(112,216,255,.10)}
+table.spec th{font:600 9.5px/1.4 var(--mono);letter-spacing:.10em;color:#7FA6BC;text-transform:uppercase;border-bottom-color:rgba(112,216,255,.22)}
+table.spec td{color:#A9C7D8}
+table.spec td:first-child{color:#DFF2FC;font-weight:600;white-space:nowrap}
+table.spec code{font:10.5px var(--mono);color:#B7DBEC;background:rgba(112,216,255,.07);padding:1px 4px;border-radius:3px}
+table.spec .new{color:#B9FFCC}
+table.spec .old{color:#7E9FB2}
+
+/* ---------- 菜单 ---------- */
+.menu-demo{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start}
+.mac-menu{
+  width:252px;padding:5px;border-radius:9px;background:rgba(30,38,50,.94);
+  border:.5px solid rgba(255,255,255,.14);box-shadow:0 20px 45px rgba(0,0,0,.5);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);flex:none;
+}
+.mac-menu .mi{display:flex;align-items:center;gap:8px;padding:4px 9px;border-radius:4px;font:12px/1.5 var(--font);color:#E6EDF4;white-space:nowrap}
+.mac-menu .mi .sig{width:12px;color:#DCE6F0;font:600 11px var(--font);text-align:center;flex:none}
+.mac-menu .mi .arrow{margin-left:auto;color:#9FAAB5;font:10px var(--font)}
+.mac-menu .mi.sep{padding:0;margin:4px 9px;height:.5px;background:rgba(255,255,255,.12)}
+.mac-menu .mi.hi{background:rgba(52,208,88,.20);color:#FFFFFF}
+.mac-menu .mi.on .sig{color:#B9FFCC}
+.menu-copy{flex:1 1 420px;min-width:280px}
+
+.footer{
+  margin-top:44px;padding:18px 0 0;border-top:.5px solid rgba(112,216,255,.12);
+  display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;font:10.5px/1.7 var(--font);color:#6F91A6;
+}
+.footer b{color:#A9C9DA;font-weight:600}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span>DeskBoard <small>/ BATTERY</small></div>
+    <div class="top-hint">电池 BATT · 四环视觉稿</div>
+    <div class="top-chips">
+      <span class="chip green"><b>364 × 140</b> pt</span>
+      <span class="chip">固定 <b>4</b> 槽</span>
+      <span class="chip">环 <b>64</b> / 线 <b>5</b></span>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="kicker">BATTERY · FOUR-RING LAYOUT</div>
+      <h1>四个环，一眼看完本机和外设</h1>
+      <p class="lede">
+        按你给的原生电池组件重画：<b>四格等权圆环</b>、图标居中、百分比在环下。
+        有设备才亮灯，空槽保留暗轨；设备名、充电时间、健康度全部退到悬停。
+        上一版的「大胶囊 + 外设列表」已废弃。
+      </p>
+
+      <div class="controls">
+        <div class="ctl-group" id="state-btns">
+          <span class="ctl-label">STATE</span>
+        </div>
+        <div class="ctl-group" id="style-btns">
+          <span class="ctl-label">STYLE</span>
+        </div>
+      </div>
+
+      <div class="stage-row">
+        <div class="stage">
+          <div class="stage-inner">
+            <div class="true-size">
+              <div id="hero-widget"></div>
+              <div class="caption">
+                <b>1× 实际大小</b>
+                <span class="dim"><i></i>364 × 140 pt</span>
+                <span class="dim">圆角 20</span>
+              </div>
+            </div>
+            <div class="zoom-wrap">
+              <div class="zoom-slot"><div class="zoom" id="hero-zoom"></div></div>
+            </div>
+          </div>
+          <div class="caption" style="margin-top:16px">
+            <b>几何：</b>
+            <span class="dim">环 64</span>
+            <span class="dim">线宽 5</span>
+            <span class="dim">槽距 18</span>
+            <span class="dim">左右 27</span>
+            <span class="dim">百分比 14.5 / Semibold</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>四档外观</h2>
+        <p>外观枚举和其余四块组件共用。电池绿刻意保留原生语义，不跟应用的青色主色统一——这块要让人一眼认出是电池。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="grid2" id="style-grid"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>六种状态</h2>
+        <p>默认就是你这台机器的形态：内建电池 80%、交流电、未充电，右边三格空环。空槽、未知、无电池都和真实读数分开。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="grid2" id="state-grid"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>悬停：细节不占环</h2>
+        <p>主面只留图标和百分比。设备名、状态、剩余/充满时间、健康度、AirPods 左右耳与盒，全部放 250pt 气泡。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="panel hover-panel">
+        <div class="hover-demo">
+          <div id="hover-mac-widget"></div>
+          <div class="hover-side">
+            <div class="bubble">
+              <div class="b-name">MacBook Pro</div>
+              <div class="b-sub">内置电池 · BATT-01</div>
+              <div class="b-hero"><b>80%</b><span>交流电 · 未充电</span></div>
+              <div class="b-rows">
+                <div class="b-row"><span>剩余时间</span><b>—</b></div>
+                <div class="b-row"><span>充满时间</span><b>—</b></div>
+                <div class="b-row"><span>设计容量</span><b>6,249 mAh</b></div>
+                <div class="b-row"><span>循环次数</span><b>56</b></div>
+              </div>
+              <div class="b-hist">电池温度 <b>30.0°C</b> · 采样 <b>12:48</b></div>
+              <div class="b-foot">系统设置 › 电池</div>
+            </div>
+            <div class="caption">
+              <b>悬停任意有设备的环</b><br>
+              <span style="color:#7E9FB2">气泡放在鼠标左侧，不压菜单栏</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="hover-demo">
+          <div id="hover-airpods-widget"></div>
+          <div class="hover-side">
+            <div class="bubble">
+              <div class="b-name">AirPods Pro</div>
+              <div class="b-sub">蓝牙 · 一槽三值</div>
+              <div class="b-hero"><b>82%</b><span>取较低一侧</span></div>
+              <div class="b-rows">
+                <div class="b-row"><span>左耳</span><b>84%</b></div>
+                <div class="b-row"><span>右耳</span><b>82%</b></div>
+                <div class="b-row"><span>充电盒</span><b>96%</b></div>
+                <div class="b-row"><span>状态</span><b>已连接</b></div>
+              </div>
+              <div class="b-hist">最后在线 <b>12:47</b> · 来源 <b>SPBluetooth</b></div>
+              <div class="b-foot">系统设置 › 蓝牙</div>
+            </div>
+            <div class="caption">
+              <b>AirPods 只占一环</b><br>
+              <span style="color:#7E9FB2">左右耳和盒不抢槽位，细节在气泡里</span>
+            </div>
+          </div>
+        </div>
+        <div class="caption" style="padding:0 0 18px;color:#7899AD">
+          <b>空槽悬停：</b>只写「未连接设备」，不弹假数据；iPhone / Apple Watch 写「无公开接口」。
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>桌面摆位</h2>
+        <p>364 宽、140 高，默认贴在系统状态卡正下方 16pt；和其余四块一样按屏、按分辨率独立存档。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="panel">
+        <div class="desk-wrap">
+          <div class="desk">
+            <div class="desk-canvas">
+              <div class="desk-menubar"></div>
+              <div class="dw cyan" style="left:16px;top:40px;width:700px;height:132px">
+                <b>签到中心</b><span>700 × 132</span>
+              </div>
+              <div class="dw cyan" style="left:1224px;top:40px;width:272px;height:142px">
+                <b>系统状态卡</b><span>272 × 142</span>
+              </div>
+              <div class="dw new" style="left:1132px;top:198px;width:364px;height:140px">
+                <span class="tag">NEW</span>
+                <b>电池 BATT</b><span>364 × 140</span>
+              </div>
+              <div class="dw cyan" style="left:936px;top:599px;width:560px;height:330px">
+                <b>活动监视器</b><span>560 × 330</span>
+              </div>
+              <div class="dw cyan" style="left:16px;top:635px;width:432px;height:294px">
+                <b>弹药库</b><span>432 × 294</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="desk-caption">
+          1512 × 945 可视区示意（0.55 倍）。电池卡与系统状态卡同右边距，中间固定 16pt；不抢四角，也不压活动监视器。
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>几何与字号</h2>
+        <p>所有数值都是 pt；窗口、离线预览和校验工具共用同一套常量。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="grid2">
+        <div class="panel">
+          <h3>版面</h3>
+          <table class="spec">
+            <tr><th>项目</th><th>值</th><th>说明</th></tr>
+            <tr><td>卡片</td><td class="new">364 × 140</td><td>固定四槽，不随设备数增减</td></tr>
+            <tr><td>圆环</td><td class="new">64 / 5pt</td><td>12 点起顺时针，圆头</td></tr>
+            <tr><td>槽距 / 边距</td><td class="new">18 / 27</td><td>4 × 64 + 3 × 18 + 2 × 27 = 364</td></tr>
+            <tr><td>图标</td><td class="new">22pt</td><td>SF Symbols，白色，居中</td></tr>
+            <tr><td>百分比</td><td class="new">14.5 Semibold</td><td>环下 6pt，等宽数字</td></tr>
+            <tr><td>圆角</td><td class="new">20</td><td>Plate / HUD 共用</td></tr>
+            <tr><td>默认位</td><td class="new">右上 + dy 174</td><td>系统卡下方 16pt</td></tr>
+          </table>
+        </div>
+        <div class="panel">
+          <h3>颜色与状态</h3>
+          <table class="spec">
+            <tr><th>状态</th><th>环色</th><th>文字 / 备注</th></tr>
+            <tr><td>正常</td><td class="new">#34D058</td><td>百分比保持白色</td></tr>
+            <tr><td>偏低 10–20%</td><td class="new">#FFB26B</td><td>百分比仍白</td></tr>
+            <tr><td>低 &lt;10%</td><td class="new">#FF6B5E</td><td>跨档闪一次</td></tr>
+            <tr><td>充电中</td><td class="new">绿色 + ⚡</td><td>图标右上 16pt 徽标</td></tr>
+            <tr><td>读数未知</td><td class="old">只留暗轨</td><td>图标 + 「—」，不是空槽</td></tr>
+            <tr><td>空槽</td><td class="old">white 6.8%</td><td>无图标、无百分比</td></tr>
+          </table>
+          <div class="note">空槽不是「0%」：悬停写「未连接设备」。iPhone / Apple Watch 没有公开接口，永远留空，不摆假环。</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>菜单与存档</h2>
+        <p>沿用现有组件的独立存档、全局锁定和多屏摆位；第一版不做调角和透明度。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="panel menu-demo">
+        <div class="mac-menu">
+          <div class="mi"><span class="sig">✓</span>显示 / 隐藏</div>
+          <div class="mi"><span class="sig"></span>外观<span class="arrow">›</span></div>
+          <div class="mi"><span class="sig"></span>立即刷新</div>
+          <div class="mi sep"></div>
+          <div class="mi"><span class="sig"></span>打开电池设置</div>
+          <div class="mi"><span class="sig"></span>打开蓝牙设置</div>
+          <div class="mi"><span class="sig"></span>恢复默认位置（系统卡下方）</div>
+        </div>
+        <div class="menu-copy">
+          <ul class="tight">
+            <li><b>存档键：</b><code>BatteryHidden</code> / <code>BatteryStyle</code> / <code>BatteryPlaces</code>。</li>
+            <li><b>摆位：</b>新增 <code>DeskPlaceKindBattery</code>；右上角 + <code>dy 174</code>，走现有夹紧逻辑。</li>
+            <li><b>锁定：</b>和其余四块共用 <code>LayoutLocked</code>；上锁时电池卡也落档。</li>
+            <li><b>点击：</b>有设备的环打开对应系统设置；按住移动超过 3pt 仍是拖组件。</li>
+            <li><b>采样：</b>本机 30s、Magic 外设 60s、AirPods 120s；插拔电源立即刷新，隐藏时暂停。</li>
+            <li><b>不做：</b>充电上限/充电管理没有公开 API，只提供「打开电池设置」深链，不画假开关。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>和数据源的对应</h2>
+        <p>能读到的进环，读不到就留空；所有「未知」都印「—」，不印 0。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="panel">
+        <ul class="tight">
+          <li><b>内建电池：</b>复用 <code>DeskStats</code> 的 IOPS 读数（百分比 / 交流电 / 充电 / 充满 / 剩余分钟），健康度走 <code>AppleSmartBattery</code>（设计容量、循环次数、温度）。本机实测 <b>80% · 交流电 · 未充电</b>。</li>
+          <li><b>Magic 外设：</b>IORegistry <code>AppleDeviceManagementHIDEventService</code> 的 <code>BatteryPercent</code>，60 秒一采，零权限。</li>
+          <li><b>AirPods：</b><code>system_profiler -json SPBluetoothDataType</code> 后台 120 秒一采，解析左/右/盒；解析失败只影响这一环，不影响其余三个。</li>
+          <li><b>iPhone / Apple Watch：</b>原生组件走 Continuity/iCloud 私有通道，没有公开接口；本方案不做，也不画假数据。</li>
+          <li><b>顺序：</b>内建电池 → AirPods → 蓝牙耳机 → Magic Mouse → Magic Keyboard → Magic Trackpad → 其他 HID；超过 4 个取前 4，悬停提示「还有 N 个」。</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>改动落点</h2>
+        <p>设计确认后再动代码；下面是这次会碰到的文件。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="panel">
+        <ul class="tight">
+          <li><code>battery.h / .m</code> — 设备模型、优先级、内建电池健康度、Magic 外设与 AirPods provider。</li>
+          <li><code>battery_view.h / .m</code> — 364 × 140 四环绘制、档位颜色、空槽/未知、悬停气泡、点击设置。</li>
+          <li><code>main.m</code> — 第五块窗口组、菜单、<code>BatteryPlaces</code>、锁定、屏幕变更、点击/拖动。</li>
+          <li><code>places.h</code> — 新增 <code>DeskPlaceKindBattery</code>，默认右上 + <code>dy 174</code>。</li>
+          <li><code>tools/preview_battery.m</code> — 离线输出六种状态 × 四档外观。</li>
+          <li><code>tools/verify_battery.m</code> — 四槽等宽、环径/线宽、百分比居中、档位阈值、未知印「—」、优先级截断。</li>
+          <li><code>tools/dump_window.m</code> — 按 364 × 140 识别电池窗，和 272 × 142 / 560 × 330 区分。</li>
+          <li><code>build.sh</code> / <code>README.md</code> — 编译清单、组件说明、菜单表。</li>
+        </ul>
+        <div class="note"><b>验收底线：</b>本机真机必须出「1 个绿环 80% + 3 个空环」，和参考图同构；电量变化只补弧，不做常驻动画。</div>
+        <div class="note"><b>老卡片先不动：</b>系统状态卡表尾的电池文字暂时保留，避免牵动已验证版面；新组件跑稳后再单独讨论要不要撤掉，免得同一块屏两处各写一个电池数。</div>
+      </div>
+    </section>
+
+    <div class="footer">
+      <div><b>说明：</b>这是 HTML 近似稿，用于确认版面、颜色和信息层级；玻璃采样、壁纸透出、文字阴影以 AppKit 实际渲染为准。</div>
+      <div>DeskBoard · 电池 BATT · 2026-11-09</div>
+    </div>
+  </main>
+</div>
+
+<script>
+const C = 2 * Math.PI * 29.5;
+
+const ICONS = {
+  mac: '<rect x="3.5" y="5" width="17" height="11" rx="1.8"/><path d="M2 18.5h20"/>',
+  airpods: '<path d="M8.2 4.6c-1.9 0-3.2 1.4-3.2 3.3v5.2c0 1.8 1.3 3.2 3.2 3.2s3.2-1.4 3.2-3.2V7.9c0-1.9-1.3-3.3-3.2-3.3z"/><path d="M15.8 4.6c1.9 0 3.2 1.4 3.2 3.3v5.2c0 1.8-1.3 3.2-3.2 3.2s-3.2-1.4-3.2-3.2V7.9c0-1.9 1.3-3.3 3.2-3.3z"/><path d="M8.2 16.3v3.1"/><path d="M15.8 16.3v3.1"/>',
+  mouse: '<rect x="8" y="3" width="8" height="18" rx="4"/><path d="M12 3.2v6.5"/>',
+  keyboard: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M9 10h.01M12 10h.01M15 10h.01M18 10h.01"/><path d="M7 13.5h10"/>',
+  trackpad: '<rect x="4" y="6.5" width="16" height="11" rx="3"/><path d="M4 13h16"/>',
+  headphones: '<path d="M4.5 13.5v-1.7a7.5 7.5 0 0 1 15 0v1.7"/><rect x="3" y="12.5" width="4.2" height="7.5" rx="2.1"/><rect x="16.8" y="12.5" width="4.2" height="7.5" rx="2.1"/>',
+  phone: '<rect x="7" y="2.5" width="10" height="19" rx="2.6"/><path d="M10 5h4"/>',
+  watch: '<rect x="7" y="6.5" width="10" height="11" rx="3"/><path d="M9 3h6M9 21h6"/>',
+  generic: '<circle cx="12" cy="12" r="8"/><path d="M12 8.5v4M12 16h.01"/>'
+};
+
+const BOLT = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>';
+
+const STATES = [
+  {
+    id:'single', label:'单设备',
+    title:'单设备（本机）',
+    desc:'只有内建电池亮灯，其余三槽保持空环——就是你给的参考图。',
+    items:[{kind:'mac', pct:80}]
+  },
+  {
+    id:'four', label:'四设备',
+    title:'四设备',
+    desc:'内建电池 + AirPods + 鼠标 + 键盘；AirPods 只占一环，左右耳和盒在悬停里。',
+    items:[{kind:'mac', pct:80},{kind:'airpods', pct:82},{kind:'mouse', pct:64},{kind:'keyboard', pct:45}]
+  },
+  {
+    id:'charging', label:'充电中',
+    title:'充电中',
+    desc:'环保持绿色，图标右上角出现闪电；百分比不变，悬停给充满时间。',
+    items:[{kind:'mac', pct:62, charging:true}]
+  },
+  {
+    id:'low', label:'低电',
+    title:'低电与档位',
+    desc:'10–20% 琥珀、<10% 红；百分比文字仍保持白色，和原生一致。',
+    items:[{kind:'mac', pct:8},{kind:'airpods', pct:15},{kind:'mouse', pct:64}]
+  },
+  {
+    id:'unknown', label:'读数未知',
+    title:'读数未知',
+    desc:'设备连着但电量读不到：画图标和「—」，和空槽明确区分。',
+    items:[{kind:'mac', pct:null},{kind:'airpods', pct:82}]
+  },
+  {
+    id:'empty', label:'无设备',
+    title:'无设备',
+    desc:'没有内建电池也没有外接设备：四环全空，底部一行提示，不伪造任何数字。',
+    items:[], hint:'未发现电池设备'
+  }
+];
+
+const STYLES = [
+  ['plate','实底卡 Plate','深色玻璃采样壁纸，0.5pt 高光边——最接近原生电池组件。'],
+  ['feather','羽化 Feather','不采样壁纸，外圈羽化暗角，环和文字带投影。'],
+  ['bare','无底 Bare','没有底板和描边，只留环、图标和百分比。'],
+  ['hud','无边玻璃 HUD','不画边框，只垫一层极淡的玻璃雾，背后透出实时壁纸。']
+];
+
+function tierColor(item){
+  if (!item || item.pct == null) return 'rgba(255,255,255,.26)';
+  if (item.charging) return 'var(--ok)';
+  if (item.pct < 10) return 'var(--red)';
+  if (item.pct < 20) return 'var(--amber)';
+  return 'var(--ok)';
+}
+
+function ringSVG(item, tier){
+  let arc = '';
+  if (item && item.pct != null) {
+    const p = Math.max(0, Math.min(100, item.pct));
+    const len = C * p / 100;
+    arc = '<circle class="arc" cx="32" cy="32" r="29.5" stroke="' + tier +
+      '" stroke-dasharray="' + len.toFixed(2) + ' ' + (C - len).toFixed(2) +
+      '" transform="rotate(-90 32 32)"/>';
+  }
+  return '<svg class="ring" viewBox="0 0 64 64" aria-hidden="true">' +
+    '<circle class="track" cx="32" cy="32" r="29.5"/>' + arc + '</svg>';
+}
+
+function slotHTML(item, hot){
+  if (!item) {
+    return '<div class="slot empty' + (hot ? ' hot' : '') + '">' +
+      '<div class="ring-wrap">' + ringSVG(null, '') + '</div></div>';
+  }
+  const tier = tierColor(item);
+  const icon = ICONS[item.kind] || ICONS.generic;
+  const bolt = item.charging ? '<span class="bolt">' + BOLT + '</span>' : '';
+  const pct = item.pct == null ? '—' : item.pct + '%';
+  return '<div class="slot' + (hot ? ' hot' : '') + '">' +
+    '<div class="ring-wrap">' + ringSVG(item, tier) +
+    '<span class="ring-icon"><svg viewBox="0 0 24 24" aria-hidden="true">' + icon + '</svg></span>' +
+    bolt + '</div>' +
+    '<span class="pct">' + pct + '</span></div>';
+}
+
+function batteryHTML(items, style, opts){
+  opts = opts || {};
+  const slots = [];
+  for (let i = 0; i < 4; i++) slots.push(slotHTML(items[i] || null, opts.hot === i));
+  return '<div class="battery style-' + style + '">' +
+    '<div class="slots">' + slots.join('') + '</div>' +
+    (opts.hint ? '<div class="empty-hint">' + opts.hint + '</div>' : '') +
+    '</div>';
+}
+
+/* ---------- Hero 交互 ---------- */
+let heroState = 'single';
+let heroStyle = 'plate';
+
+function findState(id){ return STATES.find(function(s){ return s.id === id; }) || STATES[0]; }
+
+function renderHero(){
+  const st = findState(heroState);
+  const html = batteryHTML(st.items, heroStyle, {hint: st.hint});
+  document.getElementById('hero-widget').innerHTML = html;
+  document.getElementById('hero-zoom').innerHTML = html;
+}
+
+function buildControls(){
+  const stateBox = document.getElementById('state-btns');
+  STATES.forEach(function(st){
+    const b = document.createElement('button');
+    b.className = 'ctl' + (st.id === heroState ? ' on' : '');
+    b.textContent = st.label;
+    b.dataset.state = st.id;
+    b.addEventListener('click', function(){
+      heroState = st.id;
+      stateBox.querySelectorAll('.ctl').forEach(function(x){ x.classList.toggle('on', x.dataset.state === heroState); });
+      renderHero();
+    });
+    stateBox.appendChild(b);
+  });
+
+  const styleBox = document.getElementById('style-btns');
+  const short = {plate:'Plate', feather:'Feather', bare:'Bare', hud:'HUD'};
+  STYLES.forEach(function(row){
+    const b = document.createElement('button');
+    b.className = 'ctl' + (row[0] === heroStyle ? ' on' : '');
+    b.textContent = short[row[0]];
+    b.dataset.style = row[0];
+    b.addEventListener('click', function(){
+      heroStyle = row[0];
+      styleBox.querySelectorAll('.ctl').forEach(function(x){ x.classList.toggle('on', x.dataset.style === heroStyle); });
+      renderHero();
+    });
+    styleBox.appendChild(b);
+  });
+}
+
+/* ---------- 静态区 ---------- */
+function buildStyleGrid(){
+  document.getElementById('style-grid').innerHTML = STYLES.map(function(row){
+    return '<div class="panel style-card">' +
+      '<div class="style-stage">' + batteryHTML(findState('single').items, row[0]) + '</div>' +
+      '<h3>' + row[1] + '</h3><p>' + row[2] + '</p></div>';
+  }).join('');
+}
+
+function buildStateGrid(){
+  document.getElementById('state-grid').innerHTML = STATES.map(function(st){
+    return '<div class="panel state-card">' +
+      '<div class="state-stage">' + batteryHTML(st.items, 'plate', {hint: st.hint}) + '</div>' +
+      '<h3>' + st.title + '</h3><p>' + st.desc + '</p></div>';
+  }).join('');
+}
+
+function buildHoverDemos(){
+  document.getElementById('hover-mac-widget').innerHTML =
+    batteryHTML(findState('single').items, 'plate', {hot:0});
+  document.getElementById('hover-airpods-widget').innerHTML =
+    batteryHTML(findState('four').items, 'plate', {hot:1});
+}
+
+buildControls();
+renderHero();
+buildStyleGrid();
+buildStateGrid();
+buildHoverDemos();
+</script>
+</body>
+</html>

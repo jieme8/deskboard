@@ -79,6 +79,9 @@ build_tools() {
   # 桌面层窗口的鼠标事件到底送不送到视图：postEvent 走本进程队列，不需要辅助功能权限
   clang "${BASE[@]}" -framework AppKit -framework CoreGraphics -framework CoreImage -framework ImageIO -framework QuartzCore -framework IOKit \
         -o "$BUILD_DIR/tools/probe_drag" tools/probe_drag.m history.m procs.m palette.m monitor_view.m vault.m vault_art.m vault_view.m backdrop.m quad.m
+  # 签到的「点授权没反应」：事件到底进没进视图、药丸和格子各自走哪个回调
+  clang "${BASE[@]}" -framework AppKit -framework CoreImage -framework ImageIO -framework QuartzCore \
+        -o "$BUILD_DIR/tools/probe_credits_click" tools/probe_credits_click.m credits.m credits_view.m trae_credits.m qoder_credits.m workbuddy_credits.m vault_art.m vault.m backdrop.m quad.m palette.m
   # 活动监视器离屏出图 + 采集层冒烟测试：CLI 看不见桌面，这两件是唯一的肉眼替身
   clang "${BASE[@]}" -framework AppKit -framework CoreImage -framework ImageIO -framework QuartzCore -framework IOKit \
         -o "$BUILD_DIR/tools/preview_monitor" tools/preview_monitor.m history.m procs.m palette.m monitor_view.m vault.m vault_art.m vault_view.m backdrop.m quad.m
@@ -87,6 +90,13 @@ build_tools() {
         -o "$BUILD_DIR/tools/probe_smooth" tools/probe_smooth.m
   clang "${BASE[@]}" -framework Foundation \
         -o "$BUILD_DIR/tools/try_procs" tools/try_procs.m history.m procs.m
+  # 签到：CLI 只链 Foundation；预览/断言要 AppKit 和底图那套
+  clang "${BASE[@]}" -framework Foundation \
+        -o "$BUILD_DIR/tools/try_credits" tools/try_credits.m credits.m trae_credits.m qoder_credits.m workbuddy_credits.m
+  clang "${BASE[@]}" -framework AppKit -framework CoreImage -framework ImageIO -framework QuartzCore \
+        -o "$BUILD_DIR/tools/verify_credits" tools/verify_credits.m credits.m credits_record.m credits_view.m trae_credits.m qoder_credits.m workbuddy_credits.m vault_art.m vault.m backdrop.m quad.m palette.m
+  clang "${BASE[@]}" -framework AppKit -framework CoreImage -framework ImageIO -framework QuartzCore \
+        -o "$BUILD_DIR/tools/preview_credits" tools/preview_credits.m credits.m credits_view.m trae_credits.m qoder_credits.m workbuddy_credits.m vault_art.m vault.m backdrop.m quad.m palette.m
   clang "${BASE[@]}" -framework AppKit \
         -o "$BUILD_DIR/tools/mkicon" tools/mkicon.m
   clang "${BASE[@]}" -framework AppKit -framework CoreImage -framework ImageIO -framework IOKit -framework SystemConfiguration -framework CoreWLAN -framework QuartzCore \
@@ -113,16 +123,18 @@ case "${1:-}" in
   --tools)
     echo "→ 编译校验工具"
     build_tools
-    echo "→ 产物：build/tools/{verify,dump_window,palette,preview,preview_vault,probe_sensors}"
+    echo "→ 产物：build/tools/{verify,dump_window,palette,preview,preview_vault,preview_credits,try_credits,probe_sensors}"
     exit 0
     ;;
   --check)
     echo "→ 严格编译检查（-Wall -Werror，警告即失败）"
-    clang -fsyntax-only "${BASE[@]}" main.m model.m oilfeed.m palette.m panel_view.m places.m hud.m sysmon.m hidtemp.m backdrop.m quad.m vault.m vault_art.m vault_view.m history.m procs.m monitor_view.m
+    clang -fsyntax-only "${BASE[@]}" main.m model.m oilfeed.m palette.m panel_view.m places.m hud.m sysmon.m hidtemp.m backdrop.m quad.m vault.m vault_art.m vault_view.m history.m procs.m monitor_view.m credits.m credits_record.m credits_view.m trae_credits.m qoder_credits.m workbuddy_credits.m
     echo "→ 编译校验工具"
     build_tools
     echo "→ 模型与布局断言"
     "$BUILD_DIR/tools/verify" "$(pwd -P)"
+    echo "→ 签到断言"
+    "$BUILD_DIR/tools/verify_credits" "$(pwd -P)"
     echo "→ 缩略图断言"
     "$BUILD_DIR/tools/verify_thumb"
     exit 0
@@ -137,7 +149,7 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 echo "→ 编译"
 clang "${BASE[@]}" \
       -framework AppKit -framework CoreGraphics -framework IOKit -framework CoreImage -framework ImageIO -framework SystemConfiguration -framework CoreWLAN -framework QuartzCore \
-      -o "$APP/Contents/MacOS/$APP_NAME" main.m model.m oilfeed.m palette.m panel_view.m places.m hud.m sysmon.m hidtemp.m backdrop.m quad.m vault.m vault_art.m vault_view.m history.m procs.m monitor_view.m
+      -o "$APP/Contents/MacOS/$APP_NAME" main.m model.m oilfeed.m palette.m panel_view.m places.m hud.m sysmon.m hidtemp.m backdrop.m quad.m vault.m vault_art.m vault_view.m history.m procs.m monitor_view.m credits.m credits_record.m credits_view.m trae_credits.m qoder_credits.m workbuddy_credits.m
 
 echo "→ 生成 App 图标"
 build_tools

@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeskBoard · 活动监视器 · 简略模式</title>
+<style>
+:root{
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",Arial,sans-serif;
+  --mono:"SF Mono",ui-monospace,Menlo,Monaco,monospace;
+  --cyan:#70D8FF; --cyan-b:#B2EEFF; --paper:#E2F6FF; --muted:#7EB0CE;
+  --ink:#0A1A2A;
+  --cpu:#5BB8FF; --mem:#86E0BF; --energy:#FFB26B; --net:#B4A4FF;
+  --ui:#CFE6F2; --ui-muted:#8FB0C4;
+  --card-w:272px; --card-h:142px;
+  --pad:12px; --gap:8px;
+  --tile-w:120px; --tile-h:55px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{
+  font-family:var(--font);color:var(--ui);
+  background:
+    radial-gradient(120% 80% at 18% 0%, rgba(38,86,130,.55), rgba(6,16,30,0) 55%),
+    radial-gradient(90% 70% at 88% 10%, rgba(74,58,128,.30), rgba(6,16,30,0) 60%),
+    linear-gradient(165deg,#081726 0%,#050d18 52%,#03080f 100%);
+  background-attachment:fixed;
+  -webkit-font-smoothing:antialiased;
+}
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:
+    linear-gradient(rgba(112,216,255,.035) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(112,216,255,.035) 1px,transparent 1px);
+  background-size:48px 48px;
+  mask-image:radial-gradient(120% 90% at 50% 0%,#000 20%,transparent 78%);
+  -webkit-mask-image:radial-gradient(120% 90% at 50% 0%,#000 20%,transparent 78%);
+}
+.page{position:relative;z-index:1;padding-bottom:48px}
+.topbar{
+  position:sticky;top:0;z-index:80;display:flex;flex-wrap:wrap;align-items:center;gap:12px 22px;
+  padding:13px 28px;background:rgba(5,13,24,.72);
+  backdrop-filter:blur(18px) saturate(1.1);-webkit-backdrop-filter:blur(18px) saturate(1.1);
+  border-bottom:.5px solid rgba(112,216,255,.14);
+}
+.brand{display:flex;align-items:center;gap:9px;font:600 13px/1.2 var(--font);color:#EDF9FF;letter-spacing:.2px}
+.brand .dot{width:6px;height:6px;border-radius:50%;background:var(--cyan);box-shadow:0 0 9px rgba(112,216,255,.85)}
+.brand small{font:500 11px/1 var(--mono);color:#7FA6BC;letter-spacing:.08em}
+.top-hint{font:11px/1.5 var(--font);color:var(--ui-muted)}
+.top-chips{margin-left:auto;display:flex;gap:7px;flex-wrap:wrap}
+.chip{
+  font:600 10px/1 var(--mono);color:#CCEBFA;padding:5px 8px;border-radius:20px;
+  background:rgba(112,216,255,.07);border:.5px solid rgba(112,216,255,.24);white-space:nowrap;
+}
+.chip b{color:#F2FBFF;font-weight:600}
+main{max-width:1240px;margin:0 auto;padding:0 28px}
+.hero{padding:38px 0 10px}
+.kicker{font:600 10px/1 var(--mono);letter-spacing:.18em;color:#6E9AB4;text-transform:uppercase}
+h1{margin:10px 0 8px;font:600 30px/1.18 var(--font);letter-spacing:-.02em;color:#F3FBFF}
+.lede{margin:0;max-width:680px;font:13.5px/1.7 var(--font);color:#9FBDCE}
+.lede b{color:#E7F7FF;font-weight:600}
+
+.stage-row{display:flex;gap:28px;align-items:flex-end;flex-wrap:wrap;margin-top:26px}
+.stage{
+  position:relative;flex:1 1 560px;min-height:300px;border-radius:18px;overflow:hidden;
+  background:
+    radial-gradient(90% 90% at 22% 12%, rgba(52,96,142,.50), rgba(6,16,30,0) 62%),
+    radial-gradient(80% 80% at 84% 82%, rgba(66,52,118,.38), rgba(6,16,30,0) 62%),
+    linear-gradient(150deg,#0a1c2e 0%,#061220 48%,#040b14 100%);
+  border:.5px solid rgba(112,216,255,.10);
+  box-shadow:inset 0 0 70px rgba(1,7,15,.55);
+  padding:34px 38px;
+}
+.stage::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(120% 90% at 50% 0%,rgba(0,0,0,0),rgba(0,0,0,.35));
+}
+.stage-inner{position:relative;z-index:2;display:flex;gap:54px;align-items:center;justify-content:center;flex-wrap:wrap}
+.true-size{display:flex;flex-direction:column;gap:12px;align-items:flex-start}
+.zoom-wrap{position:relative}
+.zoom{transform:scale(2);transform-origin:top left}
+.zoom-slot{width:544px;height:284px}
+.caption{font:10.5px/1.5 var(--font);color:#86A9BD;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.caption b{color:#DCEEF9;font-weight:600}
+.caption .mono{font:10px var(--mono);color:#B9D9EA}
+.dim{
+  display:inline-flex;align-items:center;gap:6px;padding:3px 7px;border-radius:5px;
+  background:rgba(112,216,255,.06);border:.5px solid rgba(112,216,255,.18);
+  font:10px/1.4 var(--mono);color:#BBD8E7;white-space:nowrap;
+}
+.dim i{display:inline-block;width:9px;height:1px;background:rgba(112,216,255,.5)}
+
+.section{margin-top:46px}
+.section-head{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:16px}
+.section-head h2{margin:0;font:600 18px/1.3 var(--font);color:#EDF9FF;letter-spacing:-.01em}
+.section-head p{margin:0;font:12px/1.6 var(--font);color:#8FB0C4;max-width:760px}
+.section-head .rule{flex:1;height:1px;background:linear-gradient(90deg,rgba(112,216,255,.22),rgba(112,216,255,0))}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+@media(max-width:1040px){.grid4{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:820px){.grid2{grid-template-columns:1fr}.stage-row{flex-direction:column;align-items:stretch}.zoom-wrap{display:none}}
+.panel{
+  position:relative;border-radius:14px;padding:20px;
+  background:rgba(7,18,32,.55);border:.5px solid rgba(112,216,255,.11);
+  box-shadow:inset 0 0 30px rgba(1,7,15,.4);
+}
+.panel h3{margin:0 0 8px;font:600 13px/1.4 var(--font);color:#E9F8FF}
+.panel p{margin:0;font:12px/1.65 var(--font);color:#93B3C6}
+.panel p+p{margin-top:6px}
+.panel .note{margin-top:10px;font:10.5px/1.6 var(--font);color:#7899AD}
+.panel .note b{color:#BBDCEA;font-weight:600}
+ul.tight{margin:8px 0 0;padding-left:16px}
+ul.tight li{font:12px/1.7 var(--font);color:#9FBDCE;margin:2px 0}
+ul.tight li b{color:#DCEFF9;font-weight:600}
+ul.tight li code{font:10.5px var(--mono);color:#B7DBEC;background:rgba(112,216,255,.07);padding:1px 4px;border-radius:3px}
+
+/* ---------- 组件本体 ---------- */
+.monitor{
+  position:relative;flex:none;width:var(--card-w);height:var(--card-h);border-radius:14px;
+  padding:var(--pad);cursor:default;isolation:isolate;
+}
+.monitor .grid{
+  position:relative;z-index:2;display:grid;width:100%;height:100%;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  grid-template-rows:repeat(2,minmax(0,1fr));
+  gap:var(--gap);
+}
+.monitor .reticle{position:absolute;inset:0;z-index:3;pointer-events:none}
+.monitor .reticle i{position:absolute;width:13px;height:13px;border:0 solid rgba(112,216,255,.45);border-radius:1px}
+.monitor .reticle i:nth-child(1){left:6px;top:6px;border-left-width:1.2px;border-top-width:1.2px}
+.monitor .reticle i:nth-child(2){right:6px;top:6px;border-right-width:1.2px;border-top-width:1.2px}
+.monitor .reticle i:nth-child(3){left:6px;bottom:6px;border-left-width:1.2px;border-bottom-width:1.2px}
+.monitor .reticle i:nth-child(4){right:6px;bottom:6px;border-right-width:1.2px;border-bottom-width:1.2px}
+
+.style-plate{
+  background:
+    linear-gradient(180deg,rgba(4,16,34,.50) 0%,rgba(4,16,34,.42) 16%,rgba(5,22,46,.28) 52%,rgba(5,22,46,.15) 100%);
+  border:.5px solid rgba(112,216,255,.16);
+  box-shadow:inset 0 0 22px rgba(2,10,22,.42),0 12px 34px rgba(0,0,0,.42);
+}
+.style-plate .grid{gap:8px}
+.style-feather{background:none;border:none;box-shadow:none}
+.style-feather::before{
+  content:"";position:absolute;inset:-18px;z-index:0;border-radius:50%;
+  background:radial-gradient(60% 60% at 50% 50%,rgba(2,9,18,.72) 0%,rgba(2,9,18,.56) 46%,rgba(2,9,18,0) 78%);
+  filter:blur(2px);
+}
+.style-feather::after{
+  content:"";position:absolute;inset:0;z-index:1;border-radius:14px;pointer-events:none;
+  border:.5px solid rgba(112,216,255,.10);
+}
+.style-bare{background:none;border:none;box-shadow:none}
+.style-hud{background:none;border:none;box-shadow:none}
+.style-hud .reticle{display:none}
+
+.tile{
+  position:relative;z-index:2;display:flex;flex-direction:column;
+  min-width:0;padding:5px 10px 5px;border-radius:8px;overflow:hidden;
+  background:rgba(8,26,46,.54);border:.5px solid rgba(112,216,255,.15);
+}
+.style-feather .tile{background:rgba(8,26,46,.30)}
+.style-bare .tile{background:rgba(8,26,46,.12)}
+.style-hud .tile{background:none;border:none;border-radius:0;border-top:.5px solid rgba(255,255,255,.09)}
+.style-hud .tile.hot{background:rgba(255,255,255,.055)}
+.style-bare .m-label,.style-bare .p-name,.style-bare .m-agg,.style-bare .p-val,
+.style-hud .m-label,.style-hud .p-name,.style-hud .m-agg,.style-hud .p-val{text-shadow:0 1px 2px rgba(0,0,0,.90)}
+.tile.hot{
+  background:rgba(112,216,255,.065);border-color:rgba(112,216,255,.38);
+  box-shadow:inset 0 0 16px rgba(112,216,255,.05);
+}
+.tile-h{display:flex;align-items:baseline;justify-content:space-between;gap:5px;height:13px;flex:none}
+.m-label{
+  font:600 9px/1.2 var(--font);color:rgba(226,246,255,.96);
+  letter-spacing:.01em;white-space:nowrap;flex:none;
+}
+.m-agg{
+  font:600 9.5px/1.15 var(--mono);color:var(--mc);white-space:nowrap;
+  font-variant-numeric:tabular-nums;letter-spacing:-.02em;
+}
+.tile-row{display:flex;align-items:baseline;justify-content:space-between;gap:4px;height:13px;margin-top:4px;flex:none}
+.p-name{
+  font:500 10.5px/1.15 var(--font);color:rgba(226,246,255,.95);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;
+}
+.p-val{
+  font:500 10.5px/1.15 var(--mono);color:#E2F6FF;white-space:nowrap;
+  font-variant-numeric:tabular-nums;letter-spacing:-.02em;flex:none;
+}
+.bar{position:relative;height:2px;margin-top:auto;border-radius:1px;background:rgba(112,216,255,.14);overflow:hidden;flex:none}
+.bar i{display:block;height:100%;border-radius:1px;background:var(--mc);min-width:0}
+.tile-empty .p-name{color:rgba(126,176,206,.78);font-size:9.5px}
+.tile-empty .p-val{display:none}
+
+/* ---------- 尺寸对比 ---------- */
+.compare{display:flex;gap:34px;align-items:flex-end;flex-wrap:wrap}
+.scalebox{position:relative;width:280px;height:165px;border:1px dashed rgba(112,216,255,.30);border-radius:8px;background:rgba(112,216,255,.025)}
+.scalebox .label{position:absolute;left:9px;top:8px;font:10px/1.4 var(--mono);color:#8FB3C8}
+.scalebox .solid{position:absolute;right:8px;bottom:8px;width:136px;height:71px;border-radius:7px;background:rgba(112,216,255,.10);border:1px solid rgba(112,216,255,.55);box-shadow:0 0 22px rgba(112,216,255,.14)}
+.scalebox .solid span{position:absolute;left:8px;top:7px;font:9.5px/1.3 var(--mono);color:#DDF4FF;white-space:nowrap}
+.metric-cards{display:flex;gap:14px;flex-wrap:wrap}
+.metric-card{flex:1 1 180px;padding:14px 16px;border-radius:10px;background:rgba(112,216,255,.045);border:.5px solid rgba(112,216,255,.14)}
+.metric-card b{display:block;font:600 22px/1.1 var(--mono);color:#EDF9FF;letter-spacing:-.03em}
+.metric-card span{display:block;margin-top:5px;font:10.5px/1.5 var(--font);color:#8FB0C4}
+
+/* ---------- 悬停 ---------- */
+.hover-stage{display:flex;gap:28px;align-items:center;flex-wrap:wrap;justify-content:center;padding:30px 20px}
+.bubble{
+  width:240px;height:192px;border-radius:12px;padding:13px 14px;flex:none;
+  background:rgba(4,18,36,.90);border:.5px solid rgba(112,216,255,.24);
+  box-shadow:0 16px 40px rgba(0,0,0,.5),inset 0 0 25px rgba(2,10,22,.35);
+  position:relative;
+}
+.bubble::after{content:"";position:absolute;right:-7px;top:74px;width:12px;height:12px;transform:rotate(45deg);background:rgba(4,18,36,.90);border-right:.5px solid rgba(112,216,255,.24);border-top:.5px solid rgba(112,216,255,.24)}
+.b-name{font:600 13px/1.2 var(--font);color:#F2FBFF;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.b-sub{font:9.5px/1.4 var(--mono);color:#8FB6CB;margin-top:3px;white-space:nowrap}
+.b-hero{display:flex;align-items:baseline;gap:7px;margin-top:9px}
+.b-hero b{font:600 21px/1 var(--mono);color:#5BB8FF;letter-spacing:-.03em}
+.b-hero span{font:10px/1.2 var(--font);color:#9FC0D2}
+.b-rows{margin-top:9px;display:grid;grid-template-columns:1fr 1fr;gap:4px 10px}
+.b-row{display:flex;justify-content:space-between;gap:6px;font:9.5px/1.5 var(--font);color:#8FB0C4;border-bottom:.5px solid rgba(112,216,255,.08);padding-bottom:2px}
+.b-row b{font:500 9.5px var(--mono);color:#DDF2FC;white-space:nowrap}
+.b-hist{margin-top:7px;font:9.5px/1.5 var(--font);color:#8FB0C4}
+.b-hist b{font:500 10px var(--mono);color:#B6E7FF}
+.b-intro{margin-top:7px;font:9.5px/1.55 var(--font);color:#A9C6D6;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.b-origin{margin-top:5px;font:8.5px/1.4 var(--mono);color:#6F94A9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hover-side{display:flex;flex-direction:column;gap:14px;align-items:center}
+.hover-side .caption{max-width:300px;justify-content:center;text-align:center}
+
+/* ---------- 菜单 ---------- */
+.menu-demo{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start}
+.mac-menu{
+  width:248px;padding:5px;border-radius:9px;background:rgba(30,38,50,.92);
+  border:.5px solid rgba(255,255,255,.14);box-shadow:0 20px 45px rgba(0,0,0,.5);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+}
+.mac-menu .mi{display:flex;align-items:center;gap:8px;padding:4px 9px;border-radius:4px;font:12px/1.5 var(--font);color:#E6EDF4;white-space:nowrap}
+.mac-menu .mi .sig{width:12px;color:#DCE6F0;font:600 11px var(--font);text-align:center;flex:none}
+.mac-menu .mi .arrow{margin-left:auto;color:#9FAAB5;font:10px var(--font)}
+.mac-menu .mi.sep{padding:0;margin:4px 9px;height:.5px;background:rgba(255,255,255,.12)}
+.mac-menu .mi.hi{background:rgba(112,216,255,.22);color:#FFFFFF}
+.mac-menu .mi.on .sig{color:#B2EEFF}
+.menu-copy{flex:1 1 420px;min-width:280px}
+
+/* ---------- 规格表 ---------- */
+table.spec{width:100%;border-collapse:collapse;font:11.5px/1.6 var(--font)}
+table.spec th,table.spec td{text-align:left;vertical-align:top;padding:8px 10px;border-bottom:.5px solid rgba(112,216,255,.10)}
+table.spec th{font:600 9.5px/1.4 var(--mono);letter-spacing:.10em;color:#7FA6BC;text-transform:uppercase;border-bottom-color:rgba(112,216,255,.22)}
+table.spec td{color:#A9C7D8}
+table.spec td:first-child{color:#DFF2FC;font-weight:600;white-space:nowrap}
+table.spec code{font:10.5px var(--mono);color:#B7DBEC;background:rgba(112,216,255,.07);padding:1px 4px;border-radius:3px}
+table.spec .old{color:#7E9FB2}
+table.spec .new{color:#DDF5FF}
+.badge{display:inline-block;padding:2px 6px;border-radius:4px;font:600 9px/1.4 var(--mono);letter-spacing:.04em}
+.badge.keep{background:rgba(112,216,255,.10);border:.5px solid rgba(112,216,255,.26);color:#BDE6F7}
+.badge.drop{background:rgba(255,138,122,.08);border:.5px solid rgba(255,138,122,.26);color:#FFB8AC}
+.badge.new{background:rgba(134,224,191,.09);border:.5px solid rgba(134,224,191,.28);color:#A6EBD2}
+
+.footer{margin-top:44px;padding:18px 0 0;border-top:.5px solid rgba(112,216,255,.12);display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;font:10.5px/1.7 var(--font);color:#6F91A6}
+.footer b{color:#A9C9DA;font-weight:600}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span>DeskBoard <small>/ MONITOR</small></div>
+    <div class="top-hint">活动监视器 · 简略模式设计稿</div>
+    <div class="top-chips">
+      <span class="chip"><b>272 × 142</b> pt</span>
+      <span class="chip">四格 × <b>1</b> 名</span>
+      <span class="chip">面积 <b>21%</b></span>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="kicker">ACTIVITY MONITOR · COMPACT MODE</div>
+      <h1>四榜还在，只是每榜只留第一名</h1>
+      <p class="lede">
+        完整模式是 <b>560 × 330</b>、四榜各 4 名；简略模式缩到和系统状态卡同尺寸的
+        <b>272 × 142</b>，仍然保留 CPU / 内存 / 能耗 / 网络四格与各自榜头总量，
+        榜内只留第 1 名进程。12h 列收起，悬停气泡仍可看全量。
+      </p>
+
+      <div class="stage-row">
+        <div class="stage">
+          <div class="stage-inner">
+            <div class="true-size">
+              <div id="hero-compact"></div>
+              <div class="caption">
+                <b>1× 实际大小</b>
+                <span class="dim"><i></i>272 × 142 pt</span>
+                <span class="dim">圆角 14</span>
+              </div>
+            </div>
+            <div class="zoom-wrap">
+              <div class="zoom-slot"><div class="zoom" id="hero-zoom"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="caption" style="margin-top:12px">
+        <b>版面：</b>
+        <span class="dim">外边距 12</span>
+        <span class="dim">格间距 8</span>
+        <span class="dim">每格 120 × 55</span>
+        <span class="dim">格内左右 10</span>
+        <span class="dim">行底条 2pt</span>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>四档外观</h2>
+        <p>外观枚举和完整模式共用：简略模式不新增皮肤，也不改任何取色；只换版面密度。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="grid2" id="style-grid"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>占地对比</h2>
+        <p>宽高各减一半左右，面积约为完整模式的 21%。默认仍锚在右下角 16pt，缩小后右下角不动。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="compare">
+        <div class="scalebox">
+          <div class="label">完整 560 × 330（50% 比例）</div>
+          <div class="solid"><span>简略 272 × 142</span></div>
+        </div>
+        <div class="metric-cards">
+          <div class="metric-card"><b>21%</b><span>占地面积为完整模式的 21%</span></div>
+          <div class="metric-card"><b>4 → 4</b><span>指标数不减，仍是一屏看四项总量</span></div>
+          <div class="metric-card"><b>16 → 4</b><span>可读进程行从 16 行降到 4 行</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>悬停：气泡不缩</h2>
+        <p>格只有 120pt 宽，进程全名和 12h 放不下；悬停仍走现有的 240 × 192 气泡，信息一条不少。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="panel">
+        <div class="hover-stage">
+          <div class="bubble">
+            <div class="b-name">Google Chrome</div>
+            <div class="b-sub">pid 1234 · uid 501 · 连接 14</div>
+            <div class="b-hero"><b>1.7%</b><span>占整机 · 单核 20.2%</span></div>
+            <div class="b-rows">
+              <div class="b-row"><span>内存</span><b>2.1G</b></div>
+              <div class="b-row"><span>能耗</span><b>12%</b></div>
+              <div class="b-row"><span>收</span><b>↓17K</b></div>
+              <div class="b-row"><span>发</span><b>↑262K</b></div>
+            </div>
+            <div class="b-hist">12h 平均 CPU <b>1.2%</b> · 覆盖 <b>11.8h</b></div>
+            <div class="b-intro">Google Chrome 浏览器主进程，负责窗口与标签页管理。</div>
+            <div class="b-origin">/Applications/Google Chrome.app</div>
+          </div>
+          <div class="hover-side">
+            <div style="position:relative" id="hover-compact"></div>
+            <div class="caption">
+              <b>悬停格：整格描边提亮</b><br>
+              <span style="color:#7E9FB2">气泡放在鼠标左边，夹在可视区内</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>入口与状态</h2>
+        <p>沿用组件现有的独立存档：简略模式是活动监视器自己的开关，不影响卡片、弹药库和签到中心。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="panel menu-demo">
+        <div class="mac-menu">
+          <div class="mi"><span class="sig">✓</span>显示 / 隐藏</div>
+          <div class="mi"><span class="sig"></span>外观<span class="arrow">›</span></div>
+          <div class="mi hi on"><span class="sig">✓</span>简略模式</div>
+          <div class="mi"><span class="sig"></span>调角模式</div>
+          <div class="mi"><span class="sig"></span>复位角点</div>
+          <div class="mi sep"></div>
+          <div class="mi"><span class="sig"></span>恢复默认位置（右下）</div>
+          <div class="mi"><span class="sig"></span>打开原生活动监视器</div>
+        </div>
+        <div class="menu-copy">
+          <ul class="tight">
+            <li><b>存档键：</b><code>MonitorCompact</code>（BOOL），默认关；重启保持。</li>
+            <li><b>切换动作：</b>重建监视器窗口，按当前屏的角 + 16pt 边距重新落位；右下角不漂。</li>
+            <li><b>调角：</b>四角位移是点偏移，和尺寸无关；切换时若在调角模式则先退出，位移保留。</li>
+            <li><b>悬停：</b>切换时关掉旧气泡，下一次悬停按新格几何重新命中。</li>
+            <li><b>锁定 / 隐藏：</b>照旧；锁定只禁拖动，不影响开关和悬停。</li>
+            <li><b>采样：</b>仍是 10 秒一拍，不降频；进程榜照常排前 4、12h 照常按拍算好，只是少画 12 行。切回完整模式不会出现 12h 空窗。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>几何与字号</h2>
+        <p>所有数值都是 pt；窗口、形变画布、离线预览和校验工具共用同一套常量。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="grid2">
+        <div class="panel">
+          <h3>版面</h3>
+          <table class="spec">
+            <tr><th>项目</th><th>完整</th><th>简略</th></tr>
+            <tr><td>卡片</td><td class="old">560 × 330</td><td class="new">272 × 142</td></tr>
+            <tr><td>外边距</td><td class="old">16 / 14</td><td class="new">12</td></tr>
+            <tr><td>格间距</td><td class="old">10 × 10</td><td class="new">8 × 8</td></tr>
+            <tr><td>每格</td><td class="old">259 × 146</td><td class="new">120 × 55</td></tr>
+            <tr><td>格内边距</td><td class="old">10 / 8</td><td class="new">10 / 5</td></tr>
+            <tr><td>每榜行数</td><td class="old">4</td><td class="new">1</td></tr>
+            <tr><td>形变画布</td><td class="old">680 × 450</td><td class="new">392 × 262</td></tr>
+          </table>
+          <div class="note">形变仍走「先画正、烘成位图、再按四角投影」；简略模式只是把卡片尺寸换成 272 × 142。</div>
+        </div>
+        <div class="panel">
+          <h3>字号与列</h3>
+          <table class="spec">
+            <tr><th>元素</th><th>字号 / 字重</th><th>说明</th></tr>
+            <tr><td>指标名</td><td class="new">9 Semibold</td><td>CPU 10s / 内存 GiB / 能耗 / 网络；不透明度 .96</td></tr>
+            <tr><td>榜头总量</td><td class="new">9.5 Semibold · 等宽</td><td>指标色；放不下时自动收到 8.5（网络必要时 8）</td></tr>
+            <tr><td>进程名</td><td class="new">10.5 Medium</td><td>不透明度 .95；超宽截断加「…」，悬停给全名</td></tr>
+            <tr><td>现在值</td><td class="new">10.5 Medium · 等宽</td><td>和完整模式同一套 <code>valueTextFor:</code>；放不下先降到 9（网络必要时 8.5），再截进程名</td></tr>
+            <tr><td>行底条</td><td class="new">2pt</td><td>只画填充，不画 12h 第二根</td></tr>
+            <tr><td>12h</td><td class="drop">收起</td><td>只在悬停气泡里出现</td></tr>
+          </table>
+          <div class="note">榜头字符串原样复用完整模式，不另造一套缩略文案；<b>网络那格</b>放不下时只降字号，不删「系统」。HUD / Bare 档的小字改用 <b>2pt 紧影</b>（完整模式是 7pt 柔影）——小字上大模糊会糊成一团。</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>行底条换了尺</h2>
+        <p>完整模式里条长是「相对本榜前 4 名的峰值」；只剩一行时，这个尺子会让每根条都顶满，所以简略模式改成「占该格榜头那个分母的份额」。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="panel">
+        <table class="spec">
+          <tr><th>指标</th><th>条长 =</th><th>分母（榜头已经写着）</th></tr>
+          <tr><td>CPU</td><td class="new">该进程占整机 / 100</td><td>整机 37%</td></tr>
+          <tr><td>内存</td><td class="new">RSS / 物理内存</td><td>16.4/24 GiB</td></tr>
+          <tr><td>能耗</td><td class="new">该进程能耗 / 全部进程能耗</td><td>前4名占全部 69%</td></tr>
+          <tr><td>网络</td><td class="new">该进程速率 / 系统总速率</td><td>系统 ↓1.2M ↑340K</td></tr>
+        </table>
+        <ul class="tight">
+          <li>非零值最小画 <b>3pt</b>，避免 1.7% 这种小值在 2pt 条上消失；数值本身仍然精确。</li>
+          <li>未知（哨兵 <code>-1</code>）或分母 ≤ 0 时不填，只留槽；照旧不印假 0。</li>
+          <li>网络进程速率可能因可读进程覆盖差异略高于系统总量，条长夹在 0–1。</li>
+          <li>没有任何可读进程时，进程行显示「没有更多活动」，条只留槽，不伪造名字。</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>保留 / 收起 / 新增</h2>
+        <p>简略不是另做一块组件：数据、取色、悬停、双击、拖动、锁定、形变全部沿用同一条路。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="grid2">
+        <div class="panel">
+          <h3>保留 <span class="badge keep">KEEP</span></h3>
+          <ul class="tight">
+            <li>四格指标顺序：CPU 左上、内存右上、能耗左下、网络右下。</li>
+            <li>榜头总量与完整模式同一套字符串、同一把尺。</li>
+            <li>进程名、现在值、单位、哨兵规则、<code>&lt;0.1%</code> 规则。</li>
+            <li>悬停整格（120 × 55）弹气泡：全名、pid、单核口径、12h 平均 / 累计、介绍、出处。</li>
+            <li>双击整格打开原生活动监视器；整块任意处拖动（双击除外）。</li>
+            <li>四档外观、四角形变、全局锁定、显示 / 隐藏、多屏摆位。</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>收起 <span class="badge drop">DROP</span> / 新增 <span class="badge new">NEW</span></h3>
+          <ul class="tight">
+            <li><span class="badge drop">DROP</span> 每榜第 2–4 名；只画第 1 名。</li>
+            <li><span class="badge drop">DROP</span> 「进程 / 现在 / 12h」列名和 12h 文字列。</li>
+            <li><span class="badge drop">DROP</span> 格内图标（120pt 宽放不下，指标色由榜头数字承担）。</li>
+            <li><span class="badge drop">DROP</span> 完整模式的「相对峰值」条尺。</li>
+            <li><span class="badge new">NEW</span> 占总量份额的 2pt 行底条。</li>
+            <li><span class="badge new">NEW</span> 菜单「简略模式」勾选项 + <code>MonitorCompact</code> 存档。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>改动落点</h2>
+        <p>设计确认后再动代码；下面是这次会碰到的文件，不牵扯其他三块组件。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="panel">
+        <ul class="tight">
+          <li><code>monitor_view.h / .m</code> — 新增 <code>kMonitorViewCompactWidth/Height</code> 与 <code>compact</code> 属性；几何、绘制、命中测试按当前卡片尺寸走；形变画布取 <code>DeskQuadCanvasSize(cardSize)</code>；切换时对四角位移按新尺寸重新夹紧。</li>
+          <li><code>main.m</code> — 新增 <code>_monitorCompact</code>、<code>MonitorCompact</code> 存档、菜单勾选项；切换时重建监视器窗口并按当前屏的角 + 16pt 边距落位。</li>
+          <li><code>tools/preview_monitor.m</code> — 加一个 compact 预览模式，输出 272 × 142 的四档外观图。</li>
+          <li><code>tools/verify.m</code> — 守简略尺寸、格几何、每格 1 行、字号层级、空榜「没有更多活动」、条长份额口径。</li>
+          <li><code>tools/dump_window.m</code> — 窗口排除条件和尺寸断言同时认 272 × 142。</li>
+          <li><code>README.md</code> — 「组件 3」补简略模式读数、行底条口径和菜单入口。</li>
+        </ul>
+      </div>
+    </section>
+
+    <div class="footer">
+      <div><b>说明：</b>这是 HTML 近似稿，用于确认版面和信息层级；玻璃、壁纸采样、文字阴影以 AppKit 实际渲染为准。</div>
+      <div>DeskBoard · 活动监视器 · 2026-11-09</div>
+    </div>
+  </main>
+</div>
+
+<script>
+const METRICS = [
+  {k:'cpu', label:'CPU 10s', agg:'整机 37%', name:'Chrome', val:'1.7%', frac:0.017, color:'var(--cpu)'},
+  {k:'mem', label:'内存 GiB', agg:'16.4/24 GiB', name:'Chrome', val:'2.1G', frac:0.0875, color:'var(--mem)'},
+  {k:'energy', label:'能耗', agg:'前4名占全部 69%', name:'DeskBoard', val:'35%', frac:0.35, color:'var(--energy)'},
+  {k:'net', label:'网络', agg:'系统 ↓1.2M ↑340K', name:'Dropbox', val:'↓17K ↑262K', frac:0.177, color:'var(--net)'}
+];
+
+function tileHTML(m, opts={}) {
+  const empty = opts.empty;
+  const hot = opts.hot;
+  const barW = empty ? 0 : Math.max(3, Math.round(m.frac * 100));
+  return `<div class="tile ${hot ? 'hot' : ''} ${empty ? 'tile-empty' : ''}" style="--mc:${m.color}">
+    <div class="tile-h">
+      <span class="m-label">${m.label}</span>
+      <span class="m-agg">${m.agg}</span>
+    </div>
+    <div class="tile-row">
+      <span class="p-name">${empty ? '没有更多活动' : m.name}</span>
+      <span class="p-val">${empty ? '' : m.val}</span>
+    </div>
+    <div class="bar"><i style="width:${barW}%"></i></div>
+  </div>`;
+}
+
+// 榜头数字放不下时先降字号（10 → 8），标题不截断；进程行同理，值先 10 → 9，再截进程名。
+// 用 canvas 量字，不看布局：形变/缩放里的副本也能得到同一结果。
+const _measureCtx = document.createElement('canvas').getContext('2d');
+function textW(el, size) {
+  const cs = getComputedStyle(el);
+  _measureCtx.font = `${cs.fontStyle} ${cs.fontWeight} ${size}px ${cs.fontFamily}`;
+  return _measureCtx.measureText(el.textContent.trim()).width;
+}
+function fitTileText(root) {
+  root.querySelectorAll('.tile-h').forEach(h => {
+    const label = h.querySelector('.m-label');
+    const agg = h.querySelector('.m-agg');
+    const avail = h.clientWidth || 100;
+    const gap = 5;
+    const lw = textW(label, parseFloat(getComputedStyle(label).fontSize));
+    let size = 9.5;
+    agg.style.fontSize = size + 'px';
+    while (size > 8 && lw + gap + textW(agg, size) > avail) {
+      size -= 0.5;
+      agg.style.fontSize = size + 'px';
+    }
+  });
+  root.querySelectorAll('.tile-row').forEach(r => {
+    const name = r.querySelector('.p-name');
+    const val = r.querySelector('.p-val');
+    if (!val || getComputedStyle(val).display === 'none') return;
+    const avail = r.clientWidth || 100;
+    const gap = 4;
+    const nw = textW(name, parseFloat(getComputedStyle(name).fontSize));
+    let size = 10.5;
+    val.style.fontSize = size + 'px';
+    while (size > 8.5 && nw + gap + textW(val, size) > avail) {
+      size -= 0.5;
+      val.style.fontSize = size + 'px';
+    }
+  });
+}
+function fitAll() {
+  document.querySelectorAll('.monitor').forEach(fitTileText);
+}
+
+function monitorHTML(style, opts={}) {
+  const tiles = METRICS.map((m, i) => tileHTML(m, {
+    hot: opts.hot === i,
+    empty: opts.empty === i
+  })).join('');
+  return `<div class="monitor style-${style}">
+    <div class="reticle"><i></i><i></i><i></i><i></i></div>
+    <div class="grid">${tiles}</div>
+  </div>`;
+}
+
+document.getElementById('hero-compact').innerHTML = monitorHTML('plate');
+document.getElementById('hero-zoom').innerHTML = monitorHTML('plate');
+document.getElementById('hover-compact').innerHTML = monitorHTML('plate', {hot:1});
+
+const STYLES = [
+  ['plate','实底卡 Plate','采样壁纸压成玻璃，四角准星和棋盘格最完整'],
+  ['feather','羽化 Feather','不采样壁纸，外圈羽化暗角，格内仍是薄雾'],
+  ['bare','无底 Bare','没有底板和描边，只留文字、格内薄雾和准星'],
+  ['hud','无边玻璃 HUD','不垫玻璃底，每格只留一条顶部细线，文字带投影']
+];
+document.getElementById('style-grid').innerHTML = STYLES.map(([k, name, desc]) => `
+  <div class="panel" style="padding:16px">
+    <div style="display:flex;justify-content:center;padding:18px 0 20px;position:relative">
+      ${monitorHTML(k)}
+    </div>
+    <h3>${name}</h3>
+    <p>${desc}</p>
+  </div>
+`).join('');
+
+requestAnimationFrame(fitAll);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitAll);
+setTimeout(fitAll, 250);
+</script>
+</body>
+</html>

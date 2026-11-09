@@ -1,0 +1,4 @@
+{
+  "base_resp": { "status_code": 0, "status_msg": "ok" },
+  "data": { "claim_result": 2, "points": 400, "day_no": 4 }
+}

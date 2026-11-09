@@ -1,25 +1,52 @@
-// 活动监视器组件实现。几何全部来自定稿的那张设计稿（432×294、四榜并列、每榜 4 名），
-// 数值改动都要回 tools/verify.m 的布局断言里对一遍。
+// 活动监视器组件实现。几何来自 2026-10-22 的第二版设计稿（四榜并列、每榜 4 名）：
+// 每行是「进程 / 现在 / 12h」三列，只画一根“现在”进度条；网络第三列是该进程 12h 累计字节。
+// 2026-10-29 按用户要求删掉抬头和底部图例，整块只留四榜，卡高 380 → 330（行距一点没动）。
 #import "monitor_view.h"
+#import "sysmon.h"
 #import "vault_art.h"
 #import "backdrop.h"
 #import "vault_view.h"      // 借 VaultDragFrame：翻转视图 ↔ 屏幕坐标那笔账已经在那边算清并测过
 #import <sys/proc_info.h>
 
-const CGFloat kMonitorViewWidth = 432.0;
-const CGFloat kMonitorViewHeight = 294.0;
+const CGFloat kMonitorViewWidth = 560.0;
+const CGFloat kMonitorViewHeight = 330.0;
+const CGFloat kMonitorViewCompactWidth = 272.0;
+const CGFloat kMonitorViewCompactHeight = 142.0;
 const NSInteger kMonitorRowsPerQuadrant = 4;
 
-static const CGFloat kPadX = 14.0, kPadTop = 13.0;
-// 表头与榜单之间只靠留白分开（卡片面板四个档里都没有横线），所以这里不再有表头高度/间隙常量
-static const CGFloat kQuadGapX = 11.0, kQuadGapY = 9.0;
-static const CGFloat kQuadPadX = 8.0, kQuadPadY = 7.0;
-static const CGFloat kQuadHeaderH = 15.0;
-static const CGFloat kRowH = 19.0;
-// 指标条照抄卡片面板：整行宽、2pt 高、贴在文字下面（panel_view.m 的 kStatRowH/kBarH 就是这套）
-static const CGFloat kBarH = 2.0;
-static const CGFloat kValueW = 34.0;
-static const CGFloat kGridTop = 48.0;          // 顶栏 + 分隔线 + 间距之后的第一格上沿
+// 上下各留 14pt：原来这 14 是抬头的上边距，现在直接就是四榜的外边距
+static const CGFloat kPadX = 16.0, kPadTop = 14.0, kPadBottom = 14.0;
+static const CGFloat kQuadGapX = 10.0, kQuadGapY = 10.0;
+static const CGFloat kQuadPadX = 10.0, kQuadPadY = 8.0;
+static const CGFloat kQuadHeaderH = 28.0;   // 指标抬头 + 列名两行
+static const CGFloat kRowH = 24.0;
+// 只画“现在”这一根；12h 改成右侧文字列（见 kHistW），不再有第二根淡条。
+static const CGFloat kBarH = 2.5;
+// 行内三列：名字占剩余宽度，右边两列固定宽；12h 列不画条。
+static const CGFloat kNowW = 64.0;
+static const CGFloat kHistW = 64.0;
+static const CGFloat kColGap = 6.0;
+static const CGFloat kGridTop = kPadTop;   // 14：四榜贴卡的上内边距
+
+// 简略模式：和系统状态卡同尺寸；12 外边距 + 8 格间距正好铺成 2×2 的 120×55 格。
+static const CGFloat kCompactPad = 12.0, kCompactGap = 8.0;
+static const CGFloat kCompactTilePadX = 10.0;
+static const CGFloat kCompactBarH = 2.0;
+static const CGFloat kCompactBarBottom = 5.0;
+
+static NSSize MonCardSize(BOOL compact) {
+    return compact ? NSMakeSize(kMonitorViewCompactWidth, kMonitorViewCompactHeight)
+                   : NSMakeSize(kMonitorViewWidth, kMonitorViewHeight);
+}
+static CGFloat MonCompactTileWidth(void) {
+    return (kMonitorViewCompactWidth - 2 * kCompactPad - kCompactGap) / 2.0;
+}
+static CGFloat MonCompactTileHeight(void) {
+    return (kMonitorViewCompactHeight - 2 * kCompactPad - kCompactGap) / 2.0;
+}
+static CGFloat MonCompactContentWidth(void) {
+    return MonCompactTileWidth() - 2 * kCompactTilePadX;
+}
 
 // 逻辑核数。CPU 每行原来印的是"占一个核的百分比"，现在整块改成占整机（见 valueTextFor:），
 // 这个核数就是两把尺之间的换算系数。
@@ -51,6 +78,25 @@ static double MonShare(double v, double total) {
     return MAX(0.0, MIN(100.0, v / total * 100.0));
 }
 
+// 每进程流量按十进制 K/M/G，和磁盘容量的十进制口径一致。
+// 网络榜一行要塞下 ↓ 和 ↑ 两个数，所以不加 "/s"（榜头/悬停里会写清楚）。
+static NSString *MonRateText(double bps) {
+    if (bps < 0) return @"—";
+    double m = bps / 1e6;
+    if (m >= 10) return [NSString stringWithFormat:@"%.0fM", m];
+    if (m >= 1) return [NSString stringWithFormat:@"%.1fM", m];
+    return [NSString stringWithFormat:@"%.0fK", bps / 1e3];
+}
+
+// 12h 累计流量按字节；和速率一样用十进制，别在同一个榜单里混两套进制。
+static NSString *MonBytesText(double bytes) {
+    if (bytes < 0) return @"—";
+    if (bytes >= 1e9) return [NSString stringWithFormat:@"%.1fG", bytes / 1e9];
+    if (bytes >= 1e6) return [NSString stringWithFormat:@"%.0fM", bytes / 1e6];
+    if (bytes >= 1e3) return [NSString stringWithFormat:@"%.0fK", bytes / 1e3];
+    return [NSString stringWithFormat:@"%.0fB", bytes];
+}
+
 #define MC(r, g, b, a) [NSColor colorWithSRGBRed:(r) / 255.0 green:(g) / 255.0 blue:(b) / 255.0 alpha:(a)]
 
 // 悬停浮层自带一块固定深底（MC(4,18,36,.86)），底色不随系统外观翻，
@@ -66,13 +112,15 @@ static NSColor *MonMetricColor(NSInteger m) {
 }
 static NSString *MonMetricLabel(NSInteger m) {
     switch (m) {
-        case DeskMonitorMetricCPU: return @"CPU";   // 榜头自己写着「整机 37%」，分母不用塞进标题里
-        case DeskMonitorMetricMemory: return @"内存";
-        case DeskMonitorMetricEnergy: return @"能耗（估）";
-        // 榜头是系统总速率，榜内每行是"活跃 socket 数"——每进程字节数这条路暂时接不了
-        // （nettop 实测烧 146% 单核，NetworkStatistics 的 NStat* 管理器未文档化），
-        // 所以这一榜的名字必须把口径写清楚，不能让人把 4 看成 4MB/s
-        default: return @"网络·连接";
+        // 窗口长度写在榜头上：这一榜的 CPU 都是最近 10 秒的窗口（榜头是整机滚动平均，
+        // 行内是进程在同一段时间里的 CPU 时间占比）。分母「整机」由右侧读数写明。
+        case DeskMonitorMetricCPU: return [NSString stringWithFormat:@"CPU %.0fs", kDeskCPUWindowSeconds];
+        // 行内只放得下 G/M，单位进制在这里写全：列里所有内存数都是 1024 制的 GiB/MiB。
+        case DeskMonitorMetricMemory: return @"内存 GiB";
+        case DeskMonitorMetricEnergy: return @"能耗";
+        // 这一榜原来印"连接数"，用户说只看到条数、看不到流量消耗。
+        // 现在榜内是每进程收发速率，连接数退到悬停气泡的 pid 行里；榜头给系统总流量。
+        default: return @"网络";
     }
 }
 
@@ -82,19 +130,6 @@ static NSFont *MonText(CGFloat size) { return [NSFont systemFontOfSize:size weig
 static NSFont *MonSemibold(CGFloat size) { return [NSFont systemFontOfSize:size weight:NSFontWeightSemibold]; }
 // 数字一律等宽，不然每两拍刷新时小数点会左右跳
 static NSFont *MonNum(CGFloat size, NSFontWeight w) { return [NSFont monospacedDigitSystemFontOfSize:size weight:w]; }
-
-// 一分钟才变一次的东西，别在 drawRect 里建 formatter（NSDateFormatter 单笔就要几十微秒）
-static NSString *_monClock;
-static NSTimeInterval _monClockAt;
-static NSString *MonClock(void) {
-    NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
-    if (_monClock && now - _monClockAt < 20.0) return _monClock;
-    static NSDateFormatter *df;
-    if (!df) { df = [[NSDateFormatter alloc] init]; df.dateFormat = @"HH:mm"; }
-    _monClock = [df stringFromDate:[NSDate date]];
-    _monClockAt = now;
-    return _monClock;
-}
 
 static void MonStr(NSString *s, NSPoint at, NSFont *f, NSColor *c, BOOL shadow) {
     NSMutableDictionary *a = [NSMutableDictionary dictionary];
@@ -110,6 +145,25 @@ static void MonStr(NSString *s, NSPoint at, NSFont *f, NSColor *c, BOOL shadow) 
     }
     [s drawAtPoint:at withAttributes:a];
 }
+
+// 简略模式的字只有 8.5~10.5pt，完整模式那层 7pt 柔影会把字缘吃掉、看起来发虚。
+// 小字改用 2pt 紧影：亮壁纸上仍有压边，暗壁纸上不会糊成一团。
+static void MonStrCompact(NSString *s, NSPoint at, NSFont *f, NSColor *c, BOOL shadow) {
+    NSMutableDictionary *a = [NSMutableDictionary dictionary];
+    a[NSFontAttributeName] = f;
+    a[NSForegroundColorAttributeName] = c;
+    if (shadow) {
+        NSShadow *sh = [[NSShadow alloc] init];
+        sh.shadowColor = [NSColor colorWithWhite:0 alpha:0.90];
+        sh.shadowOffset = NSMakeSize(0, -1.0);
+        sh.shadowBlurRadius = 2.0;
+        a[NSShadowAttributeName] = sh;
+    }
+    [s drawAtPoint:at withAttributes:a];
+}
+
+// 12h 列不再铺深色小底：用户要的是数字直接落在卡片玻璃上。
+// 文字仍是近白 13pt/10.5pt，HUD/Bare 档靠原有的文字阴影保可读性。
 static CGFloat MonWidth(NSString *s, NSFont *f) {
     return [s sizeWithAttributes:@{NSFontAttributeName: f}].width;
 }
@@ -141,10 +195,10 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     DeskPalette _pal;         // 每次 drawRect 按系统外观重取，和卡片面板同一个 DeskPaletteFor
     NSString *_cellName[4][4];    // 截断在数据变更时算一次，绘制路径只贴字
     double _cellAvg[4][4];          // 12h 平均：同样只在换拍时算一次，绘制路径只读
+    double _cellTotal[4][4];        // 网络行专用：该进程 12h 累计字节
     double _cellCov[4][4];          // 这一格里窗口内真正记录到的秒数（数据完不完整靠它）
     double _topShare;               // 能耗榜前四名占全部进程能耗的比例（0~1），换拍算一次
     double _energyTotal;            // 全部进程能耗分之和 = 上面那个比例的分母，和 _topShare 同一次循环算出来
-    NSInteger _totalSockets;          // 全部可读进程的 socket 总数：网络榜头要和每行同一个量纲
     // 调角模式：变形时整张组件先画成正的、烘成位图，再按四角投影（和弹药库同一条路）
     DeskQuadOffsets _quadOffsets;
     BOOL _editing;
@@ -174,6 +228,25 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 - (BOOL)isFlipped { return YES; }
 - (BOOL)acceptsFirstMouse:(NSEvent *)e { return YES; }
 
+// 独立视图（预览/校验）没有窗口替它改尺寸，这里自己缩；
+// 应用里窗口由 main.m 重建，contentView 会被窗口撑到正确尺寸。
+- (void)setCompact:(BOOL)compact {
+    if (compact == _compact) return;
+    _compact = compact;
+    _flatSource = nil; _flatHost = nil; _flatRep = nil;
+    _hoverMetric = _hoverRow = -1;
+    _hover = NSZeroRect;
+    if (!self.window) {
+        // 独立视图自己缩；变形态要缩到「卡片 + 四角余量」那张画布
+        NSSize s = self.isWarped ? [DeskMonitorView windowSizeWarped:YES compact:compact]
+                                 : MonCardSize(compact);
+        self.frame = NSMakeRect(0, 0, s.width, s.height);
+    }
+    [self updateRows:_all];       // 名字截断宽度和简略条份额都跟尺寸有关
+    if (self.isWarped) [self syncWarp];
+    [self setNeedsDisplay:YES];
+}
+
 // 桌面层窗口永远不是 key，用 NSTrackingActiveInKeyWindow 的话悬停根本不投递。
 // **不要加 NSTrackingEnabledDuringMouseDrag**：那是三块组件里只有监视器带过的一项，
 // 它让 tracking area 在"按住拖动"期间继续收 mouseMoved —— 而 mouseMoved: 会去弹悬停浮层
@@ -191,6 +264,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 
 // 要画就顺手把动画表叫回来：空闲时那张表是停着的，没这个钩子悬停/刷新都不会动
 - (void)setNeedsDisplay:(BOOL)flag {
+    if (flag && _drawSuppressed) return;   // 被盖住时数据照收，只是不把帧表叫起来
     [super setNeedsDisplay:flag];
     if (flag && self.onNeedFrames) self.onNeedFrames();
 }
@@ -207,7 +281,11 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     lists[DeskMonitorMetricCPU] = [self rank:byPid key:^double(DeskProc *p) { return p.cpu; }];
     lists[DeskMonitorMetricMemory] = [self rank:byPid key:^double(DeskProc *p) { return p.mem; }];
     lists[DeskMonitorMetricEnergy] = [self rank:byPid key:^double(DeskProc *p) { return p.energy; }];
-    lists[DeskMonitorMetricNetwork] = [self rank:byPid key:^double(DeskProc *p) { return (double)p.sockets; }];
+    lists[DeskMonitorMetricNetwork] = [self rank:byPid key:^double(DeskProc *p) {
+        if (p.netInRate < 0 || p.netOutRate < 0) return -1.0;
+        double total = p.netInRate + p.netOutRate;
+        return total > 0 ? total : -1.0;   // 没流量的进程不占网络榜
+    }];
 
     // 前四名占比：换拍算一次。分子直接用已经排好的能耗榜，不再遍历一遍全部进程
     {
@@ -217,12 +295,6 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         _topShare = total > 0 ? top4 / total : 0;
         _energyTotal = total;
     }
-    {   // 网络榜头的"共 N 个"：和每行同一个量纲，换拍算一次
-        NSInteger sum = 0;
-        for (DeskProc *p in _all) if (p.sockets > 0) sum += p.sockets;
-        _totalSockets = sum;
-    }
-
     // 名字截断要量字宽，每帧 16 行都量一遍就是肉眼可见的开销，所以只在数据变更时算一次
     for (int m = 0; m < 4; m++) {
         double peak = 1.0;
@@ -238,22 +310,37 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
             }
             DeskProc *p = lists[m][i];
             _cell[m][i] = p.pid;
-            _cellName[m][i] = [self fitName:p.name width:[self nameWidthForMetric:m]
-                                       font:MonReg(10.5)];
-            _cellTarget[m][i] = MAX(0.04, MIN(1.0, [self valueOf:p metric:m] / peak));
+            if (_compact) {
+                // 先按"值最小会缩到 8.5pt"留宽度，这样绘制时优先缩值、不急着截进程名。
+                CGFloat valW = MonWidth([self valueTextFor:p metric:m], MonNum(8.5, NSFontWeightMedium));
+                CGFloat nameW = MAX(12.0, MonCompactContentWidth() - valW - 4.0);
+                _cellName[m][i] = [self fitName:p.name width:nameW font:MonText(10.5)];
+                _cellTarget[m][i] = [self compactShareForProc:p metric:m];
+            } else {
+                _cellName[m][i] = [self fitName:p.name width:[self nameWidthForMetric:m]
+                                           font:MonReg(10.5)];
+                _cellTarget[m][i] = MAX(0.04, MIN(1.0, [self valueOf:p metric:m] / peak));
+            }
             // 12h 平均只在换拍问一次；DeskHistMetric 和 DeskMonitorMetric 四个成员顺序一致
-            _cellAvg[m][i] = 0; _cellCov[m][i] = 0;
+            _cellAvg[m][i] = 0; _cellTotal[m][i] = 0; _cellCov[m][i] = 0;
             if (self.historyForPid) {
                 double cov = 0;
                 _cellAvg[m][i] = self.historyForPid(p.pid, (DeskHistMetric)m, &cov);
                 _cellCov[m][i] = cov;
             }
+            if (m == DeskMonitorMetricNetwork && self.historyTotalForPid && _cellCov[m][i] > 0) {
+                double tcov = 0;
+                _cellTotal[m][i] = self.historyTotalForPid(p.pid, &tcov);
+                if (tcov <= 0) _cellTotal[m][i] = 0;
+            }
         }
     }
+    // 数据每 5 秒才换一拍，条子缓动只是好看：从旧值长到新值要整卡重画几十帧，
+    // 实测这是 App 常态 CPU 的大头。这里直接落到目标值，一拍只画一帧。
+    for (int m = 0; m < 4; m++)
+        for (int r = 0; r < kMonitorRowsPerQuadrant; r++) _cellFrac[m][r] = _cellTarget[m][r];
     if (self.isWarped) {
         // 变形态没有"长过来"这回事：一拍一跳，顺便告诉外层位图过期了
-        for (int m = 0; m < 4; m++)
-            for (int r = 0; r < kMonitorRowsPerQuadrant; r++) _cellFrac[m][r] = _cellTarget[m][r];
         _flatDirty = YES;
     }
     [self setNeedsDisplay:YES];
@@ -264,8 +351,37 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         case DeskMonitorMetricCPU: return MAX(0, p.cpu);
         case DeskMonitorMetricMemory: return MAX(0, p.mem);
         case DeskMonitorMetricEnergy: return MAX(0, p.energy);
-        default: return MAX(0, (double)p.sockets);
+        default: {
+            if (p.netInRate < 0 || p.netOutRate < 0) return 0;
+            return MAX(0, p.netInRate + p.netOutRate);
+        }
     }
+}
+
+// 简略模式只剩一行，完整模式那根"相对本榜前 4 名峰值"的尺会让每根条都顶满。
+// 这里改成占榜头分母的份额：CPU 占整机、内存占物理、能耗占全部进程、网络占系统总量。
+- (double)compactShareForProc:(DeskProc *)p metric:(NSInteger)m {
+    double f = 0;
+    switch (m) {
+        case DeskMonitorMetricCPU:
+            // p.cpu < 0 是首拍哨兵：未知就是 0，不拿负数画条
+            if (p.cpu >= 0) f = MonCpuShare(p.cpu) / 100.0;
+            break;
+        case DeskMonitorMetricMemory:
+            if (_totalMemPhys > 0) f = MAX(0.0, p.mem) / _totalMemPhys;
+            break;
+        case DeskMonitorMetricEnergy:
+            if (_energyTotal > 0) f = MAX(0.0, p.energy) / _energyTotal;
+            break;
+        default: {
+            if (_totalNetRecv < 0 || _totalNetSend < 0) break;
+            double sys = _totalNetRecv + _totalNetSend;
+            if (sys <= 0 || p.netInRate < 0 || p.netOutRate < 0) break;
+            f = (p.netInRate + p.netOutRate) / sys;
+            break;
+        }
+    }
+    return MAX(0.0, MIN(1.0, f));
 }
 
 - (NSArray<DeskProc *> *)rank:(NSDictionary<NSNumber *, DeskProc *> *)byPid
@@ -285,10 +401,10 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 }
 
 - (CGFloat)nameWidthForMetric:(NSInteger)m {
+    if (_compact) return MAX(12.0, MonCompactContentWidth() - 56.0 - 4.0);
     NSRect q = [self quadRectForMetric:m];
     CGFloat rowW = NSWidth(q) - 2 * kQuadPadX;
-    // 行右端固定留给数值；指标条已经挪到文字下面，不再占横向空间
-    return rowW - kValueW - 6;
+    return rowW - kNowW - kHistW - 2 * kColGap;
 }
 
 - (NSString *)fitName:(NSString *)full width:(CGFloat)w font:(NSFont *)f {
@@ -315,14 +431,25 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 
 - (NSRect)quadRectForMetric:(NSInteger)m {
     int col = (int)m % 2, row = (int)m / 2;
-    CGFloat w = (kMonitorViewWidth - 2 * kPadX - kQuadGapX) / 2.0;
-    CGFloat bodyH = kMonitorViewHeight - kGridTop - kPadTop;
-    CGFloat h = (bodyH - kQuadGapY) / 2.0;
-    return NSMakeRect(kPadX + col * (w + kQuadGapX),
-                      kGridTop + row * (h + kQuadGapY), w, h);
+    NSSize card = MonCardSize(_compact);
+    CGFloat padX = _compact ? kCompactPad : kPadX;
+    CGFloat padTop = _compact ? kCompactPad : kGridTop;
+    CGFloat padBottom = _compact ? kCompactPad : kPadBottom;
+    CGFloat gapX = _compact ? kCompactGap : kQuadGapX;
+    CGFloat gapY = _compact ? kCompactGap : kQuadGapY;
+    CGFloat w = _compact ? MonCompactTileWidth() : (card.width - 2 * padX - gapX) / 2.0;
+    CGFloat h = _compact ? MonCompactTileHeight() : ((card.height - padTop - padBottom - gapY) / 2.0);
+    return NSMakeRect(padX + col * (w + gapX), padTop + row * (h + gapY), w, h);
+}
+
+- (NSRect)tileRectAtMetric:(NSInteger)m in:(NSRect)b {
+    NSRect q = [self quadRectForMetric:m];
+    NSSize card = MonCardSize(_compact);
+    return NSOffsetRect(q, NSMinX(b) - (card.width - NSWidth(b)) / 2.0, 0);
 }
 
 - (NSRect)rowRectAtMetric:(NSInteger)m row:(NSInteger)r in:(NSRect)b {
+    if (_compact) return r == 0 ? [self tileRectAtMetric:m in:b] : NSZeroRect;
     NSRect q = [self quadRectForMetric:m];
     q = NSOffsetRect(q, NSMinX(b) - (kMonitorViewWidth - NSWidth(b)) / 2.0, 0);
     CGFloat top = NSMinY(q) + kQuadPadY + kQuadHeaderH + 4.0;
@@ -332,13 +459,16 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     return NSMakeRect(NSMinX(q) + kQuadPadX, y, NSWidth(q) - 2 * kQuadPadX, kRowH);
 }
 
-// 抄 panel_view.m:244：行底往上留 1pt 缝，条子本身 2pt，圆角取半高
+// 条子只铺“进程 + 现在”两列，右侧 12h 列不画条。
 + (NSRect)barRectInRow:(NSRect)row {
-    return NSMakeRect(NSMinX(row), NSMaxY(row) - kBarH - 1, NSWidth(row), kBarH);
+    return NSMakeRect(NSMinX(row), NSMaxY(row) - kBarH - 2.0,
+                      NSWidth(row) - kHistW - kColGap, kBarH);
 }
 
-+ (NSRect)nowBarRectInRow:(NSRect)row {
-    return NSMakeRect(NSMinX(row), NSMaxY(row) - kBarH * 2 - 2, NSWidth(row), kBarH);
++ (NSRect)barRectInTile:(NSRect)tile {
+    return NSMakeRect(NSMinX(tile) + kCompactTilePadX,
+                      NSMaxY(tile) - kCompactBarBottom - kCompactBarH,
+                      NSWidth(tile) - 2 * kCompactTilePadX, kCompactBarH);
 }
 
 - (DeskPalette)paletteSnapshot {
@@ -346,6 +476,18 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 }
 
 - (NSInteger)hitTestRowAt:(NSPoint)p in:(NSRect)b metric:(NSInteger *)metricOut {
+    if (_compact) {
+        // 一格里只有一个进程，整格都是它的悬停/双击区；格只有 120×55，再去切一条细行没必要。
+        for (int m = 0; m < 4; m++) {
+            if (_cell[m][0] <= 0) continue;
+            if (NSPointInRect(p, NSInsetRect([self tileRectAtMetric:m in:b], -2, -1))) {
+                if (metricOut) *metricOut = m;
+                return 0;
+            }
+        }
+        if (metricOut) *metricOut = -1;
+        return -1;
+    }
     for (int m = 0; m < 4; m++) {
         for (int r = 0; r < kMonitorRowsPerQuadrant; r++) {
             if (_cell[m][r] <= 0) continue;
@@ -357,6 +499,11 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     }
     if (metricOut) *metricOut = -1;
     return -1;
+}
+
+- (double)barFractionAtMetric:(NSInteger)m row:(NSInteger)r {
+    if (m < 0 || m > 3 || r < 0 || r >= kMonitorRowsPerQuadrant) return 0;
+    return MAX(0.0, MIN(1.0, _cellFrac[m][r]));
 }
 
 - (void)applyPreviewHover:(NSInteger)metric row:(NSInteger)row {
@@ -400,9 +547,10 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     if (NSEqualRects(base, NSZeroRect) || !self.isWarped) return base;
     // 变形时窗口比卡片大 kDeskQuadPad 一圈，直接采会采到"画布外圈"的壁纸，
     // 底板和卡面对不上 —— 先按 pad 缩回真正那块卡片矩形
+    NSSize card = MonCardSize(_compact);
     return NSMakeRect(NSMinX(base) + kDeskQuadPad,
-                      NSMinY(base) + (NSHeight(base) - kDeskQuadPad - kMonitorViewHeight),
-                      kMonitorViewWidth, kMonitorViewHeight);
+                      NSMinY(base) + (NSHeight(base) - kDeskQuadPad - card.height),
+                      card.width, card.height);
 }
 
 // 采一次 CoreImage 模糊要几十毫秒，位置没动就别重采
@@ -411,7 +559,9 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     if (NSEqualRects(r, NSZeroRect)) return nil;
     BOOL moved = !NSEqualRects(r, _wallpaperRect);
     NSTimeInterval age = _wallpaperAt ? [[NSDate date] timeIntervalSinceDate:_wallpaperAt] : 1e9;
-    if (_wallpaper && !moved && age < 6.0) return _wallpaper;
+    // 壁纸是分钟级变量；一次 CoreImage 模糊几十毫秒，6 秒一采纯属白烧。
+    // 位置没动就缓存 30 秒，换壁纸/换屏由 setStandInScreenRect 或重建窗口清掉。
+    if (_wallpaper && !moved && age < 30.0) return _wallpaper;
     NSImage *img = [[DeskBackdrop shared] imageForRect:r dark:YES];
     if (!img) return _wallpaper;
     _wallpaper = img; _wallpaperRect = r; _wallpaperAt = [NSDate date];
@@ -439,20 +589,107 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     // 上一版我给 Bare 留了 blur 7 的软外发光（理由是壁纸亮处对比度只有 1.27:1），
     // 但用户要的就是"和卡片一样"，所以这里跟着去掉；真要在亮壁纸上看得清，
     // 该走的是 Feather 那档的羽化暗底（背景层），不是往字上叠影子。
-    BOOL textShadow = (_style == DeskStyleHUD);
+    BOOL textShadow = (_style == DeskStyleHUD || _style == DeskStyleBare);
     NSBezierPath *clip = [NSBezierPath bezierPathWithRoundedRect:b xRadius:14.0 yRadius:14.0];
     [NSGraphicsContext saveGraphicsState];
     [clip addClip];
     [self drawPlateIn:b];
-    [self drawHeaderIn:b textShadow:textShadow];
-    for (int m = 0; m < 4; m++) [self drawQuadrant:m in:b textShadow:textShadow];
+    for (int m = 0; m < 4; m++) {
+        if (_compact) [self drawCompactTile:m in:b textShadow:textShadow];
+        else [self drawQuadrant:m in:b textShadow:textShadow];
+    }
     [NSGraphicsContext restoreGraphicsState];
 
-    if (_style == DeskStylePlate || _style == DeskStyleHUD) {
+    if (_style != DeskStyleBare && _style != DeskStyleHUD) {
         NSBezierPath *edge = [NSBezierPath bezierPathWithRoundedRect:b xRadius:14.0 yRadius:14.0];
         edge.lineWidth = 1.0;
-        [_style == DeskStyleHUD ? MC(90, 230, 255, 0.34) : MC(255, 255, 255, 0.10) setStroke];
+        CGFloat edgeA = _style == DeskStyleFeather ? 0.10 : 0.16;
+        [[VaultCyan() colorWithAlphaComponent:edgeA] setStroke];
         [edge stroke];
+    }
+    if (_style != DeskStyleHUD) VaultDrawReticle(b, 6.0, 13.0, VaultCyan(), 0.45, 1.2);
+}
+
+// 简略模式的一格：指标名 + 榜头总量 / 第 1 名 + 现在值 / 份额条。
+// 不画图标、列名和 12h —— 120pt 宽塞不下；全名和 12h 走悬停气泡。
+- (void)drawCompactTile:(NSInteger)m in:(NSRect)b textShadow:(BOOL)shadow {
+    NSRect tile = [self tileRectAtMetric:m in:b];
+    BOOL hot = (_hoverMetric == m);
+    BOOL glass = (self.style == DeskStyleHUD);
+    if (!glass) {
+        NSBezierPath *bg = [NSBezierPath bezierPathWithRoundedRect:tile xRadius:8 yRadius:8];
+        [[VaultInk() colorWithAlphaComponent:VaultCardFillAlpha(self.style, 0, 0)] setFill];
+        [bg fill];
+        if (hot) {
+            [[VaultCyan() colorWithAlphaComponent:0.06] setFill];
+            [bg fill];
+        }
+        bg.lineWidth = 1.0;
+        [[VaultCyan() colorWithAlphaComponent:(hot ? 0.32 : 0.15)] setStroke];
+        [bg stroke];
+    } else {
+        // HUD 原来整格透底，白壁纸上 8.5~10.5pt 的字直接漂没了；
+        // 按签到槽补一块墨底（2026-11-09，用户拿白壁纸截图报"看不清"）。
+        VaultDrawInkPlate(tile, 8.0, 0.56, 0.14);
+        if (hot) {
+            NSBezierPath *bg = [NSBezierPath bezierPathWithRoundedRect:tile xRadius:8 yRadius:8];
+            [[VaultCyan() colorWithAlphaComponent:0.06] setFill];
+            [bg fill];
+        }
+    }
+
+    CGFloat left = NSMinX(tile) + kCompactTilePadX;
+    CGFloat right = NSMaxX(tile) - kCompactTilePadX;
+    CGFloat avail = right - left;
+
+    // 榜头：指标名 + 总量。字符串和完整模式同一套，只按格宽收字号。
+    NSString *label = MonMetricLabel(m);
+    NSString *agg = [self aggregateFor:m];
+    NSFont *lf = MonSemibold(9.0);
+    NSFont *af = MonNum(9.5, NSFontWeightSemibold);
+    while (af.pointSize > 8.0 && MonWidth(label, lf) + 5.0 + MonWidth(agg, af) > avail)
+        af = MonNum(af.pointSize - 0.5, NSFontWeightSemibold);
+    CGFloat labW = MIN(MonWidth(label, lf), MAX(18.0, avail - MonWidth(agg, af) - 5.0));
+    NSString *lab = [self fitName:label width:labW font:lf];
+    MonStrCompact(lab, NSMakePoint(left, NSMinY(tile) + 5.0), lf,
+                  [VaultPaper() colorWithAlphaComponent:0.96], shadow);
+    MonStrCompact(agg, NSMakePoint(right - MonWidth(agg, af), NSMinY(tile) + 4.0), af,
+                  MonMetricColor(m), shadow);
+
+    // 第 1 名：进程名 + 现在值。值先缩到 8.5pt，再考虑截进程名。
+    DeskProc *p = [self procAtMetric:m row:0];
+    CGFloat rowY = NSMinY(tile) + 22.0;
+    if (!p) {
+        MonStrCompact(@"没有更多活动", NSMakePoint(left, rowY + 0.5), MonText(9.5),
+                      [VaultMuted() colorWithAlphaComponent:0.78], shadow);
+    } else {
+        NSString *val = [self valueTextFor:p metric:m];
+        NSString *name = _cellName[m][0] ?: p.name;
+        NSFont *nf = MonText(10.5);
+        NSFont *vf = MonNum(10.5, NSFontWeightMedium);
+        while (vf.pointSize > 8.5 && MonWidth(name, nf) + 4.0 + MonWidth(val, vf) > avail)
+            vf = MonNum(vf.pointSize - 0.5, NSFontWeightMedium);
+        CGFloat nameMax = MAX(12.0, avail - MonWidth(val, vf) - 4.0);
+        name = [self fitName:name width:nameMax font:nf];
+        MonStrCompact(name, NSMakePoint(left, rowY), nf,
+                      [VaultPaper() colorWithAlphaComponent:0.95], shadow);
+        MonStrCompact(val, NSMakePoint(right - MonWidth(val, vf), rowY), vf, VaultPaper(), shadow);
+    }
+
+    // 条长 = 该格榜头分母的份额；未知/分母为 0 只留槽。
+    NSRect bar = [DeskMonitorView barRectInTile:tile];
+    NSBezierPath *track = [NSBezierPath bezierPathWithRoundedRect:bar
+                                                          xRadius:kCompactBarH / 2 yRadius:kCompactBarH / 2];
+    [[VaultCyan() colorWithAlphaComponent:0.14] setFill];
+    [track fill];
+    double frac = MAX(0.0, MIN(1.0, _cellFrac[m][0]));
+    if (frac > 0.0) {
+        NSRect knob = NSMakeRect(NSMinX(bar), NSMinY(bar),
+                                 MAX(3.0, round(NSWidth(bar) * frac)), kCompactBarH);
+        NSBezierPath *fp = [NSBezierPath bezierPathWithRoundedRect:knob
+                                                           xRadius:kCompactBarH / 2 yRadius:kCompactBarH / 2];
+        [MonMetricColor(m) setFill];
+        [fp fill];
     }
 }
 
@@ -464,62 +701,61 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         case DeskStyleFeather:
             VaultDrawPlateFeather(b);
             break;
-        case DeskStyleHUD: {
-            NSBezierPath *clip = [NSBezierPath bezierPathWithRoundedRect:b xRadius:14.0 yRadius:14.0];
-            [clip addClip];
-            [MC(4, 26, 50, 0.22) setFill];
-            [clip fill];
-            break;
-        }
+        case DeskStyleHUD:
         case DeskStyleBare:
         default:
-            break;   // 完全无底：整块透出壁纸，靠文字投影撑可读性
+            // 无边玻璃按用户要求不再垫玻璃底：背后完全透出壁纸，只留文字和文字投影
+            break;
     }
-}
-
-- (void)drawHeaderIn:(NSRect)b textShadow:(BOOL)shadow {
-    CGFloat y = kPadTop;
-    NSFont *titleFont = MonSemibold(12.5);
-    NSString *title = @"活动监视器";
-    MonStr(title, NSMakePoint(kPadX, y), titleFont, _pal.title, shadow);
-    CGFloat x = kPadX + MonWidth(title, titleFont) + 9.0;
-    // 第二根条子必须在这里说明白 —— 用户反馈"看不懂那根线是什么意思"，而版面里之前
-    // 没有任何地方交代过它。图例挂在表头这句后面，不额外占一行，也不动四榜的格子。
-    NSString *cnt = [NSString stringWithFormat:@"你的进程 %ld 个 · 亮条=现在 淡条=12小时平均",
-                     (long)_procCount];
-    MonStr(cnt, NSMakePoint(x, y + 2), MonText(10.0), _pal.label, shadow);
-    NSString *stamp = [NSString stringWithFormat:@"%@ 采样", MonClock() ?: @"--:--"];
-    MonStr(stamp, NSMakePoint(NSMaxX(b) - kPadX - MonWidth(stamp, MonNum(10.0, NSFontWeightRegular)), y + 2),
-           MonNum(10.0, NSFontWeightRegular), _pal.footer, shadow);
-
-    // 这里原来还有一根横贯整宽的表头分隔线（p.sep）。卡片面板四个档里**任何一档都没有
-    // 横线**：它只用一根竖分隔线分栏（panel_view.m 的 divX）。无底那档浮字下面横一条线，
-    // 读起来就是"字底下压着一条影"，而且它是这块组件里最后一个贴在文字正下方的非文字元素，
-    // 所以整根去掉，表头与榜单之间只靠留白分开。
 }
 
 - (void)drawQuadrant:(NSInteger)m in:(NSRect)b textShadow:(BOOL)shadow {
     NSRect q = [self quadRectForMetric:m];
-    if (_style != DeskStyleBare && _style != DeskStyleFeather) {
+    BOOL hot = (_hoverMetric == m);
+    // 四榜各是一张弹药库卡片：深蓝薄雾 + 青描边。
+    // HUD 档原来拆掉卡片只留一条顶部分隔线，白壁纸上整片字读不出来；
+    // 现在按签到槽补墨底，和其余三档一样有卡片边界（2026-11-09）。
+    // 左边缘原来那根 2pt 指标色刻度已按用户要求去掉（2026-10-23），别再画回来。
+    BOOL glass = (self.style == DeskStyleHUD);
+    if (!glass) {
         NSBezierPath *bg = [NSBezierPath bezierPathWithRoundedRect:q xRadius:9.0 yRadius:9.0];
-        [MC(255, 255, 255, _style == DeskStyleHUD ? 0.02 : 0.030) setFill];
+        [[VaultInk() colorWithAlphaComponent:VaultCardFillAlpha(self.style, 0, 0)] setFill];
         [bg fill];
-        if (_style == DeskStyleHUD) {
-            bg.lineWidth = 1.0;
-            [MC(90, 230, 255, 0.16) setStroke];
-            [bg stroke];
+        bg.lineWidth = 1.0;
+        [[VaultCyan() colorWithAlphaComponent:(hot ? 0.32 : 0.15)] setStroke];
+        [bg stroke];
+    } else {
+        VaultDrawInkPlate(q, 9.0, 0.56, 0.14);
+        if (hot) {
+            NSBezierPath *bg = [NSBezierPath bezierPathWithRoundedRect:q xRadius:9.0 yRadius:9.0];
+            [[VaultCyan() colorWithAlphaComponent:0.06] setFill];
+            [bg fill];
         }
     }
     [self drawMetricIcon:m in:NSMakeRect(NSMinX(q) + kQuadPadX, NSMinY(q) + kQuadPadY + 2, 11, 11)];
 
-    NSFont *lf = MonReg(10.0);
+    NSFont *lf = MonSemibold(11.0);
     MonStr(MonMetricLabel(m), NSMakePoint(NSMinX(q) + kQuadPadX + 16, NSMinY(q) + kQuadPadY),
-           lf, _style == DeskStyleHUD ? MC(190, 240, 255, 0.82) : _pal.title, shadow);
+           lf, VaultPaper(), shadow);
 
     NSString *agg = [self aggregateFor:m];
-    NSFont *af = MonNum(11.0, NSFontWeightMedium);
+    NSFont *af = MonNum(10.0, NSFontWeightMedium);
     MonStr(agg, NSMakePoint(NSMaxX(q) - kQuadPadX - MonWidth(agg, af), NSMinY(q) + kQuadPadY - 1),
            af, MonMetricColor(m), shadow);
+
+    // 列名：进程 / 现在 / 12h。网络第三列是累计，其它三榜是平均。
+    NSRect r0 = [self rowRectAtMetric:m row:0 in:b];
+    CGFloat histRight = NSMaxX(r0);
+    CGFloat nowRight = histRight - kHistW - kColGap;
+    NSFont *cf = MonNum(8.5, NSFontWeightMedium);
+    NSFont *hcf = MonNum(10.5, NSFontWeightMedium);
+    CGFloat colY = NSMinY(q) + kQuadPadY + 16.0;
+    NSColor *colColor = [VaultPaper() colorWithAlphaComponent:0.90];
+    MonStr(@"进程", NSMakePoint(NSMinX(r0), colY), cf, colColor, shadow);
+    MonStr(@"现在", NSMakePoint(nowRight - MonWidth(@"现在", cf), colY), cf, colColor, shadow);
+    NSString *hl = (m == DeskMonitorMetricNetwork) ? @"12h 累计" : @"12h 均";
+    MonStr(hl, NSMakePoint(histRight - 5.0 - MonWidth(hl, hcf), colY + 0.5),
+           hcf, [VaultPaper() colorWithAlphaComponent:0.98], shadow);
 
     for (int r = 0; r < kMonitorRowsPerQuadrant; r++) {
         [self drawRow:m row:r in:b textShadow:shadow];
@@ -527,6 +763,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 }
 
 - (NSString *)aggregateTextForMetric:(NSInteger)m { return [self aggregateFor:m]; }
+- (NSString *)metricLabelForVerify:(NSInteger)m { return MonMetricLabel(m); }
 - (double)energyShareTotal { return _energyTotal; }
 
 - (NSString *)aggregateFor:(NSInteger)m {
@@ -539,7 +776,9 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
             return [NSString stringWithFormat:@"整机 %.0f%%", MAX(0.0, MIN(100.0, _totalCPU))];
         case DeskMonitorMetricMemory: {
             if (_totalMemPhys <= 0) return @"—";
-            return [NSString stringWithFormat:@"%.0fG/%.0fG", _totalMemUsed / 1e9, _totalMemPhys / 1e9];
+            // 和卡片面板、关于本机、原生活动监视器同一进制：1024³ 的 GiB。
+            return [NSString stringWithFormat:@"%.1f/%.0f GiB",
+                    _totalMemUsed / 1073741824.0, _totalMemPhys / 1073741824.0];
         }
         case DeskMonitorMetricEnergy:
             // 原来这里直接印 _totalEnergy —— 全部进程的 cpu + 唤醒×0.08 之和，单位是我自己
@@ -551,12 +790,11 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
             if (_topShare <= 0) return @"—";   // 守卫只看 _topShare：它和读数同源，别拿外部喂的 _totalEnergy 当第二套真相
             return [NSString stringWithFormat:@"前4名占全部 %.0f%%", MAX(0.0, MIN(100.0, _topShare * 100.0))];
         default:
-            // 原来是系统总速率（48K/s）配一堆连接数（5、4、4）—— 榜头是"速率"、每行是"个数"，
-            // 和单位换算那条是同一个毛病，只是还没被人撞上。改成同量纲的总数。
-            if (_totalSockets <= 0) return @"—";
-            // 单位必须写出来：光"共 59 个"没人知道数的是什么（用户原话：
-            // "网络连接这个 59 5432 看不懂什么意思"）。59 = 全部可读进程的连接数合计。
-            return [NSString stringWithFormat:@"共 %ld 条连接", (long)_totalSockets];
+            // 榜头原来是"共 N 条连接"，榜内是连接数 —— 用户说只看到条数、看不到流量消耗。
+            // 现在榜头是整机收发速率，榜内是每进程收发速率；连接数退到悬停气泡。
+            if (_totalNetRecv < 0 || _totalNetSend < 0) return @"—";
+            return [NSString stringWithFormat:@"系统 ↓%@ ↑%@",
+                    MonRateText(_totalNetRecv), MonRateText(_totalNetSend)];
     }
 }
 
@@ -567,111 +805,99 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 
     if (hot) {
         NSBezierPath *hl = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(row, -3, -1) xRadius:5 yRadius:5];
-        [MC(255, 255, 255, 0.10) setFill];
+        [[VaultCyan() colorWithAlphaComponent:0.10] setFill];
         [hl fill];
+        [[VaultCyanBright() colorWithAlphaComponent:0.80] setFill];
+        NSRectFill(NSMakeRect(NSMinX(row), NSMinY(row) + 2.0, 2.0, NSHeight(row) - 4.0));
     }
-    if (!p) {   // 数据不足：画淡占位，格子不能塌（铺满度是硬要求）
-        MonStr(r == 0 ? @"没有更多活动" : @"", NSMakePoint(NSMinX(row), NSMinY(row) + 1),
-               MonText(10.5), [_pal.label colorWithAlphaComponent:0.62], shadow);
+    if (!p) {   // 数据不足：空槽用虚线占位，和弹药库的空库位一个意思；不写假数据
+        NSBezierPath *empty = [NSBezierPath bezierPath];
+        empty.lineWidth = 1.0;
+        CGFloat dash[2] = { 3.0, 4.0 };
+        [empty setLineDash:dash count:2 phase:0];
+        [empty moveToPoint:NSMakePoint(NSMinX(row), NSMidY(row))];
+        [empty lineToPoint:NSMakePoint(NSMaxX(row), NSMidY(row))];
+        [[VaultCyan() colorWithAlphaComponent:0.10] setStroke];
+        [empty stroke];
+        if (r == 0) {
+            MonStr(@"没有更多活动", NSMakePoint(NSMinX(row), NSMinY(row) + 1),
+                   MonText(10.5), [VaultMuted() colorWithAlphaComponent:0.62], shadow);
+        }
         return;
     }
 
-    // 指标条：整行宽、2pt 高、贴在文字下面 —— 和卡片面板 panel_view.m:244 是同一个元素。
-    // 它原来是"名字右侧一段 44pt 胶囊 + 一截灰细线"，横在字旁边；压在深浅不一的壁纸上
-    // 就是一团灰，用户说的"字体下面有阴影"其实是这个，不是任何一处 NSShadow。
-    // 两根 2pt 条上下分开画，不重叠所以不会看混：上=现在，下=过去 12 小时平均。
-    // 下面那根自带轨道，长度不足就是"长期比现在闲"，一眼读得出来。
-    NSRect bar = [DeskMonitorView barRectInRow:row];            // 下：12h
-    NSRect nowBar = [DeskMonitorView nowBarRectInRow:row];   // 上：现在
-    // 轨道只在"这一格真记录到"的时候画。画一根空轨道读起来就是"12 小时平均 = 0"，
-    // 而真相是"还不知道"：刚重启的头一分钟、以及没进过追踪名单的进程，全都是空轨道，
-    // 整块板子会是一片假零 —— 和"191 没单位"是同一类毛病（读数说了它不该说的话）。
-    if ([self showsHistoryTrackAtMetric:m row:r]) {
-        NSBezierPath *track = [NSBezierPath bezierPathWithRoundedRect:bar
-                                                              xRadius:kBarH / 2 yRadius:kBarH / 2];
-        [_pal.barTrack setFill];
-        [track fill];
-    }
-    // 上面这根也必须有自己的槽。卡片面板的条子从来是"槽 + 填充"一套（panel_view.m 的
-    // drawBar:track:），这里以前只给下面那根画槽，结果上面是裸条、下面是一整根横贯行宽的灰线，
-    // 读起来就是"多出一根没人解释的线"（用户问的"第二根线"）。两根都装槽才是一对同尺度的量表。
-    {
-        NSBezierPath *nowTrack = [NSBezierPath bezierPathWithRoundedRect:nowBar
-                                                 xRadius:kBarH / 2 yRadius:kBarH / 2];
-        [_pal.barTrack setFill];
-        [nowTrack fill];
-    }
+    // 只画“现在”这一根：行底一条 2.5pt 的槽 + 填充。12h 改成右侧文字列，
+    // 不再用第二根淡条；两根条子叠在一起正是用户说“看不清”的主要来源。
+    NSRect bar = [DeskMonitorView barRectInRow:row];
+    NSBezierPath *track = [NSBezierPath bezierPathWithRoundedRect:bar
+                                                          xRadius:kBarH / 2 yRadius:kBarH / 2];
+    [[VaultCyan() colorWithAlphaComponent:0.14] setFill];
+    [track fill];
     double frac = MAX(0.0, MIN(1.0, _cellFrac[m][r]));
     if (frac > 0.0) {
-        NSRect knob = NSMakeRect(NSMinX(nowBar), NSMinY(nowBar),
-                                 MAX(3.0, round(NSWidth(nowBar) * frac)), kBarH);
+        NSRect knob = NSMakeRect(NSMinX(bar), NSMinY(bar),
+                                 MAX(3.0, round(NSWidth(bar) * frac)), kBarH);
         NSBezierPath *fp = [NSBezierPath bezierPathWithRoundedRect:knob xRadius:kBarH / 2 yRadius:kBarH / 2];
         [MonMetricColor(m) setFill];
         [fp fill];
     }
-    double histFrac = [self historyBarFractionAtMetric:m row:r];
-    if (histFrac > 0.0) {
-        NSRect knob = NSMakeRect(NSMinX(bar), NSMinY(bar),
-                                 MAX(3.0, round(NSWidth(bar) * histFrac)), kBarH);
-        NSBezierPath *fp = [NSBezierPath bezierPathWithRoundedRect:knob xRadius:kBarH / 2 yRadius:kBarH / 2];
-        [[MonMetricColor(m) colorWithAlphaComponent:0.45] setFill];
-        [fp fill];
-    }
 
-    CGFloat nameX = NSMinX(row);
+    CGFloat histRight = NSMaxX(row);
+    CGFloat nowRight = histRight - kHistW - kColGap;
     NSString *name = _cellName[m][r];
-    NSFont *nf = MonReg(10.5);
     if (name.length == 0) name = p.name;
-    // 角色色照抄卡片面板 drawLabel:value:：label 走 p.label 蓝灰、value 走 p.primary 近白。
-    // 之前这里名字也用近白，是因为我把"字下面有阴影"错判成字色太淡；真凶是横在字旁边那段
-    // 胶囊+灰细线（已换成行底 2pt 细条）。现在按面板的信息层级对号入座：白=数据、蓝灰=标签。
-    // 实机量过这块壁纸：监视器底下 p95 亮度 44，卡片底下 p95 94 —— 卡片在更亮的地方都还敢用
-    // 蓝灰标签，这里更没有理由不用。
-    // 文字顶对齐到行内 +2，给下面的 2pt 指标条留出 1pt 缝，和卡片面板同一套算法。
-    MonStr(name, NSMakePoint(nameX, NSMinY(row) + 1), nf, _pal.label, shadow);
+    MonStr(name, NSMakePoint(NSMinX(row), NSMinY(row) + 2.0), MonReg(10.5),
+           [VaultPaper() colorWithAlphaComponent:0.84], shadow);
 
     NSString *val = [self valueTextFor:p metric:m];
-    NSFont *vf = MonNum(11.0, NSFontWeightMedium);   // 对齐面板的 rowFont（等宽 Medium）
-    MonStr(val, NSMakePoint(NSMaxX(row) - MonWidth(val, vf), NSMinY(row) + 1), vf, _pal.primary, shadow);
-}
+    NSFont *vf = MonNum(10.5, NSFontWeightMedium);
+    MonStr(val, NSMakePoint(nowRight - MonWidth(val, vf), NSMinY(row) + 2.0),
+           vf, VaultPaper(), shadow);
 
-// 现在这根条子的满刻度对应的原始量值：12h 条要和它同一把尺，长短才可比
-- (double)valueTextScaleForMetric:(NSInteger)m row:(NSInteger)r {
-    DeskProc *p = [self procAtMetric:m row:r];
-    if (!p) return 0;
-    double v = [self valueOf:p metric:m];
-    return v > 0 ? v / MAX(0.04, _cellTarget[m][r]) : 0;
+    NSString *hist = [self historyTextAtMetric:m row:r];
+    NSFont *hf = MonNum(13.0, NSFontWeightMedium);
+    MonStr(hist, NSMakePoint(histRight - 5.0 - MonWidth(hist, hf), NSMinY(row) + 1.0),
+           hf, [VaultPaper() colorWithAlphaComponent:0.98], shadow);
 }
 
 - (double)historyAverageAtMetric:(NSInteger)m row:(NSInteger)r {
     if (m < 0 || m > 3 || r < 0 || r >= kMonitorRowsPerQuadrant) return 0;
     return _cellAvg[m][r];
 }
-// 这一格该不该画 12h 那根的槽。规矩只有一句：没有记录就没有槽 ——
-// 空槽读起来是"12 小时平均 = 0"，而真相是"还不知道"（和"191 没单位"同一类毛病）。
-// 单独开成方法是为了让 verify.m 能断言它，不然这条只能靠肉眼守。
-// 两根条子能对比，全靠"12h 那根用现在这根的满刻度做分母"这一条。它是整个淡条设计的
-// 全部理由，之前却没有任何断言守着 —— 谁把分母换成"这一列自己的最大值"，两根条子就
-// 立刻不可比，而画面上完全看不出来。开成方法就是为了能被断言。
-- (double)historyBarFractionAtMetric:(NSInteger)m row:(NSInteger)r {
+
+- (double)historyTotalAtMetric:(NSInteger)m row:(NSInteger)r {
     if (m < 0 || m > 3 || r < 0 || r >= kMonitorRowsPerQuadrant) return 0;
-    if (_cellCov[m][r] <= 0 || _cellFrac[m][r] <= 0.001) return 0;
-    double live = [self valueTextScaleForMetric:m row:r];
-    if (live <= 0) return 0;
-    return MAX(0.0, MIN(1.0, _cellAvg[m][r] / live));
-}
-- (double)nowBarFractionAtMetric:(NSInteger)m row:(NSInteger)r {
-    if (m < 0 || m > 3 || r < 0 || r >= kMonitorRowsPerQuadrant) return 0;
-    return MAX(0.0, MIN(1.0, _cellFrac[m][r]));
-}
-- (BOOL)showsHistoryTrackAtMetric:(NSInteger)m row:(NSInteger)r {
-    if (m < 0 || m > 3 || r < 0 || r >= kMonitorRowsPerQuadrant) return NO;
-    return _cellCov[m][r] > 0;
+    return _cellTotal[m][r];
 }
 
 - (double)historyCoveredAtMetric:(NSInteger)m row:(NSInteger)r {
     if (m < 0 || m > 3 || r < 0 || r >= kMonitorRowsPerQuadrant) return 0;
     return _cellCov[m][r];
+}
+
+// 第三列的文字：CPU/内存/能耗是平均，网络是该进程 12h 累计字节。
+// 没有记录就印“—”，不拿 0 冒充“不知道”。
+- (NSString *)historyTextAtMetric:(NSInteger)m row:(NSInteger)r {
+    if (m < 0 || m > 3 || r < 0 || r >= kMonitorRowsPerQuadrant) return @"—";
+    if (_cellCov[m][r] <= 0) return @"—";
+    if (m == DeskMonitorMetricNetwork) return MonBytesText(_cellTotal[m][r]);
+    double avg = _cellAvg[m][r];
+    switch (m) {
+        case DeskMonitorMetricCPU: {
+            double share = MonCpuShare(avg);
+            if (share > 0 && share < 0.05) return @"<0.1%";
+            return [NSString stringWithFormat:@"%.1f%%", share];
+        }
+        case DeskMonitorMetricMemory:
+            if (avg >= 1073741824.0) return [NSString stringWithFormat:@"%.1fG", avg / 1073741824.0];
+            if (avg >= 1048576.0) return [NSString stringWithFormat:@"%.0fM", avg / 1048576.0];
+            return [NSString stringWithFormat:@"%.0fK", MAX(0.0, avg) / 1024.0];
+        case DeskMonitorMetricEnergy:
+            if (_energyTotal <= 0) return @"—";
+            return [NSString stringWithFormat:@"%.0f%%", MonShare(avg, _energyTotal)];
+        default:
+            return @"—";
+    }
 }
 
 - (NSString *)valueTextFor:(DeskProc *)p metric:(NSInteger)m {
@@ -690,11 +916,13 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
             return [NSString stringWithFormat:@"%.1f%%", share];
         }
         case DeskMonitorMetricMemory: {
-            // 榜头是 1e9 的 GB，行内原来走 1048576/1024 —— 同一个 1.5GB 的进程
-            // 会被印成 1.4G，同一榜两种进制。统一成十进制（和榜头"23G/24G"一把尺）。
-            double mb = p.mem / 1e6;
-            return mb >= 1000.0 ? [NSString stringWithFormat:@"%.1fG", mb / 1000.0]
-                                : [NSString stringWithFormat:@"%.0fM", mb];
+            // 榜头是 1024³ 的 GiB，行内也必须用同一进制；单位进制写在榜头「内存 GiB」上。
+            // 小于 1 MiB 的进程印 K，不把 500KB 四舍五入成假零 "0M"。
+            if (p.mem >= 1073741824.0)
+                return [NSString stringWithFormat:@"%.1fG", p.mem / 1073741824.0];
+            if (p.mem >= 1048576.0)
+                return [NSString stringWithFormat:@"%.0fM", p.mem / 1048576.0];
+            return [NSString stringWithFormat:@"%.0fK", MAX(0.0, p.mem) / 1024.0];
         }
         // 能耗每行原来是裸的分（用户撞上的就是那个 "191"）—— 单位是我按
         // "CPU% + 唤醒次数×0.08" 造的，绝对值没有任何人能解读。换成占比：分母就是
@@ -702,8 +930,12 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         // p.energy < 0 是哨兵：MonShare 会把负值当 0，那就是假零 —— 印"—"。
         case DeskMonitorMetricEnergy: return p.energy < 0 ? @"—"
             : [NSString stringWithFormat:@"%.0f%%", MonShare(p.energy, _energyTotal)];
-        // 行内也带单位："5" 看不出是连接数、进程数还是别的
-        default: return [NSString stringWithFormat:@"%ld 条", (long)p.sockets];
+        // 行内现在是每进程收发速率；连接数在悬停气泡的 pid 行里。
+        default: {
+            if (p.netInRate < 0 || p.netOutRate < 0) return @"—";
+            return [NSString stringWithFormat:@"↓%@ ↑%@",
+                    MonRateText(p.netInRate), MonRateText(p.netOutRate)];
+        }
     }
 }
 
@@ -758,8 +990,14 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 
 #pragma mark - 调角模式
 
++ (NSSize)cardSizeCompact:(BOOL)compact { return MonCardSize(compact); }
+
 + (NSSize)windowSizeWarped:(BOOL)warped {
-    NSSize card = NSMakeSize(kMonitorViewWidth, kMonitorViewHeight);
+    return [self windowSizeWarped:warped compact:NO];
+}
+
++ (NSSize)windowSizeWarped:(BOOL)warped compact:(BOOL)compact {
+    NSSize card = MonCardSize(compact);
     return warped ? DeskQuadCanvasSize(card) : card;
 }
 
@@ -778,7 +1016,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 }
 
 - (DeskQuad)currentQuad {
-    return DeskQuadFromOffsets(NSMakeSize(kMonitorViewWidth, kMonitorViewHeight), _quadOffsets);
+    return DeskQuadFromOffsets(MonCardSize(_compact), _quadOffsets);
 }
 - (BOOL)isWarped { return !DeskQuadOffsetsIsZero(_quadOffsets) || _editing; }
 
@@ -789,13 +1027,14 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
         return;
     }
     if (!_flatHost) {
-        NSRect inner = NSMakeRect(0, 0, kMonitorViewWidth, kMonitorViewHeight);
+        NSRect inner = NSMakeRect(0, 0, MonCardSize(_compact).width, MonCardSize(_compact).height);
         _flatHost = [[NSWindow alloc] initWithContentRect:inner
                                                styleMask:NSWindowStyleMaskBorderless
                                                  backing:NSBackingStoreBuffered defer:NO];
         [_flatHost setBackgroundColor:[NSColor clearColor]];
         _flatHost.opaque = NO;
         _flatSource = [[DeskMonitorView alloc] initWithFrame:inner];
+        _flatSource.compact = _compact;
         _flatSource.autoresizingMask = NSViewNotSizable;   // 别跟着宿主窗口被撑开
         _flatSource.style = _style;
         _flatHost.contentView = _flatSource;               // 从不上屏，只当渲染素材
@@ -811,7 +1050,6 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     _style = src->_style;
     _totalCPU = src->_totalCPU; _totalMemUsed = src->_totalMemUsed; _totalMemPhys = src->_totalMemPhys;
     _totalEnergy = src->_totalEnergy;
-    _procCount = src->_procCount;
     // 能耗分母不在这份清单里，是故意的：下面那句 updateRows: 会拿 src->_all 重算一遍
     // _energyTotal / _topShare，再显式搬一次就是给同一个数留第二个来源。
     // 负向对照量过：把 `_energyTotal = src->_energyTotal` 加回来再删掉，215 条断言一条不动。
@@ -819,6 +1057,8 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     for (int m = 0; m < 4; m++)
         for (int r = 0; r < kMonitorRowsPerQuadrant; r++) { _cellAvg[m][r] = src->_cellAvg[m][r];
                                                             _cellCov[m][r] = src->_cellCov[m][r]; }
+    for (int m = 0; m < 4; m++)
+        for (int r = 0; r < kMonitorRowsPerQuadrant; r++) _cellTotal[m][r] = src->_cellTotal[m][r];
     // 必须在这里显式钉一次：updateRows: 末尾那个 snap 走的是"我自己 isWarped"，而素材源
     // 自己从没变形（它就是张正的），于是条子会停在 0 —— 实机烘出来就是只有灰轨道没进度条
     for (int m = 0; m < 4; m++)
@@ -832,10 +1072,11 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     // 宿主窗口只当"素材画板"，尺寸必须始终等于卡片本体：一旦跟外窗一样大，
     // contentView 会被自动撑开，底板铺满而内容缩在左上角
     NSRect wf = self.window.frame;
-    [_flatHost setFrame:NSMakeRect(NSMidX(wf) - kMonitorViewWidth / 2.0,
-                                   NSMidY(wf) - kMonitorViewHeight / 2.0,
-                                   kMonitorViewWidth, kMonitorViewHeight) display:NO];
-    NSRect src = NSMakeRect(0, 0, kMonitorViewWidth, kMonitorViewHeight);
+    NSSize card = MonCardSize(_compact);
+    [_flatHost setFrame:NSMakeRect(NSMidX(wf) - card.width / 2.0,
+                                   NSMidY(wf) - card.height / 2.0,
+                                   card.width, card.height) display:NO];
+    NSRect src = NSMakeRect(0, 0, card.width, card.height);
     _flatSource.frame = src;
     NSBitmapImageRep *rep = [_flatSource bitmapImageRepForCachingDisplayInRect:src];
     [_flatSource cacheDisplayInRect:src toBitmapImageRep:rep];
@@ -862,7 +1103,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     DeskQuad q = self.currentQuad;
     NSPoint *pts[4] = { &q.tl, &q.tr, &q.br, &q.bl };
     *pts[corner] = p;
-    NSSize card = NSMakeSize(kMonitorViewWidth, kMonitorViewHeight);
+    NSSize card = MonCardSize(_compact);
     _quadOffsets = DeskQuadOffsetsClamp(DeskQuadOffsetsFromQuad(q, card), card);
 }
 
@@ -873,7 +1114,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 
 - (NSRect)resetButtonRect {
     const CGFloat w = 64, h = 22;
-    CGFloat bottom = kDeskQuadPad + kMonitorViewHeight;   // 翻转坐标下卡片下边缘
+    CGFloat bottom = kDeskQuadPad + MonCardSize(_compact).height;   // 翻转坐标下卡片下边缘
     return NSMakeRect(round(NSMidX(self.bounds) - w / 2.0),
                       round(bottom + (kDeskQuadPad - h) / 2.0), w, h);
 }
@@ -1011,6 +1252,7 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
     // 不调、照样拖得动（不对称检验通过的唯一候选）。它会就地跑 AppKit 自己的事件会话，
     // 把 mouseDragged 从我们视图里吞掉；而桌面图标层的非 key 窗它又搬不动，
     // 两头同时落空，表现就是"按住一点动静都没有"。
+    if (self.locked) return;   // 全局锁定：按下照样记日志、双击照样开 AM，只是不挪窗
     _dragging = YES;
     _dragLogged = NO;
     _dragStartMouse = NSEvent.mouseLocation;
@@ -1086,6 +1328,8 @@ static BOOL MonEaseDone(double x, double target, double eps) { return fabs(x - t
 
 #pragma mark - 悬停详情浮层
 
+const NSSize kDeskMonitorHoverSize = { 240.0, 192.0 };
+
 static NSString *MonUptime(long long startedAt) {
     if (startedAt <= 0) return @"—";
     double ago = [[NSDate date] timeIntervalSince1970] - (double)startedAt;
@@ -1095,12 +1339,41 @@ static NSString *MonUptime(long long startedAt) {
     return [NSString stringWithFormat:@"已运行 %.0f 天", ago / 86400.0];
 }
 
+// 多行文字（介绍、出处）都要用到；单行 MonStr 不够。
+static void MonPara(NSString *s, NSRect r, NSFont *f, NSColor *c, NSLineBreakMode mode) {
+    NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
+    ps.lineBreakMode = mode;
+    [s drawWithRect:r
+            options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingTruncatesLastVisibleLine
+         attributes:@{NSFontAttributeName: f,
+                      NSForegroundColorAttributeName: c,
+                      NSParagraphStyleAttributeName: ps}];
+}
+
+static CGFloat MonLineHeight(NSFont *f) {
+    return ceil(f.ascender - f.descender + f.leading);
+}
+
 @implementation DeskMonitorHoverView {
-    NSFont *_nameFont, *_metaFont, *_labelFont, *_valueFont;
+    NSFont *_nameFont, *_metaFont, *_labelFont, *_valueFont, *_introFont, *_originFont;
 }
 
 - (NSString *)historyText {
     return MonHistText(_histMetric, _histAvg, _histCovered, self.energyTotal);
+}
+
+- (NSString *)historyFoot {
+    if (_histMetric == DeskMonitorMetricNetwork) {
+        if (_histTotal >= 0) {
+            return [NSString stringWithFormat:@"12h 累计 %@ · 双击看原生活动监视器",
+                                              MonBytesText(_histTotal)];
+        }
+        return @"流量=当前收发速率 · 连接数见上行 · 双击看原生活动监视器";
+    }
+    return _histCovered > 0 && _histCovered < kDeskHistoryWindow * 0.98
+        ? [NSString stringWithFormat:@"12h 平均基于已记录的 %.1f 小时 · 双击看原生活动监视器",
+                                      _histCovered / 3600.0]
+        : @"12h 平均 = 过去 12 小时 · 双击看原生活动监视器";
 }
 
 - (instancetype)initWithFrame:(NSRect)f {
@@ -1109,11 +1382,30 @@ static NSString *MonUptime(long long startedAt) {
         _metaFont = MonNum(9.0, NSFontWeightRegular);
         _labelFont = MonText(9.5);
         _valueFont = MonNum(11.0, NSFontWeightBold);
+        // 介绍是要读的正文，字号不能跟着 pid 那行一起缩；出处只是补充，才用 8.5。
+        _introFont = MonText(9.5);
+        _originFont = MonReg(8.5);
+        _histTotal = -1;
     }
     return self;
 }
 
 - (BOOL)isFlipped { return YES; }
+
+- (NSInteger)introLineCount {
+    if (!_intro.length) return 0;
+    NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
+    ps.lineBreakMode = NSLineBreakByWordWrapping;
+    CGFloat w = NSWidth(self.bounds) - 20.0;
+    if (w <= 0) return 1;
+    NSRect r = [_intro boundingRectWithSize:NSMakeSize(w, CGFLOAT_MAX)
+                                    options:NSStringDrawingUsesLineFragmentOrigin
+                                 attributes:@{NSFontAttributeName: _introFont,
+                                              NSParagraphStyleAttributeName: ps}];
+    CGFloat lh = MonLineHeight(_introFont);
+    NSInteger n = lh > 0 ? (NSInteger)llround(r.size.height / lh) : 1;
+    return MIN(2, MAX(1, n));
+}
 
 // 12h 读数必须和这一行的即时值同一单位，否则并排放着还是看不懂
 static NSString *MonHistText(NSInteger metric, double avg, double covered, double energyTotal) {
@@ -1123,17 +1415,18 @@ static NSString *MonHistText(NSInteger metric, double avg, double covered, doubl
         // CPU 存的是单核百分点，屏上现在统一印占整机，这里跟着换算。
         case DeskMonitorMetricCPU: return [NSString stringWithFormat:@"12h %.1f%%", MonCpuShare(avg)];
         case DeskMonitorMetricMemory: {
-            // 和行内、榜头同一进制（1e6/1e9）。混用 1048576 会把 900MB 印成 858M，
-            // 悬停里的 12h 值和行内当前值就不是一把尺了。
-            double mb = avg / 1e6;
-            return mb >= 1000.0 ? [NSString stringWithFormat:@"12h %.1fG", mb / 1000.0]
-                                : [NSString stringWithFormat:@"12h %.0fM", mb];
+            // 和行内、榜头同一进制（1024³）。单位写全，悬停里的 12h 值和当前值才是一把尺。
+            if (avg >= 1073741824.0)
+                return [NSString stringWithFormat:@"12h %.1f GiB", avg / 1073741824.0];
+            if (avg >= 1048576.0)
+                return [NSString stringWithFormat:@"12h %.0f MiB", avg / 1048576.0];
+            return [NSString stringWithFormat:@"12h %.0f KiB", MAX(0.0, avg) / 1024.0];
         }
         case DeskMonitorMetricEnergy:
             // 分母没喂进来就宁可空着：印个 "12h 0%" 是假数据，比不印更糟
             if (energyTotal <= 0) return nil;
             return [NSString stringWithFormat:@"12h %.0f%%", MonShare(avg, energyTotal)];
-        case DeskMonitorMetricNetwork: return [NSString stringWithFormat:@"12h %.0f 条", avg];
+        case DeskMonitorMetricNetwork: return [NSString stringWithFormat:@"12h %@/s", MonRateText(avg)];
         default: return nil;
     }
 }
@@ -1150,24 +1443,47 @@ static NSString *MonHistText(NSInteger metric, double avg, double covered, doubl
     CGFloat x = 10.0, y = 9.0;
     MonStr(_procName.length ? _procName : @"—", NSMakePoint(x, y), _nameFont, MonBubbleInk(), NO);
     y += 16.0;
-    MonStr([NSString stringWithFormat:@"pid %d · uid %ld · %@", (int)_pid, (long)_uid,
-            MonUptime(_startedAt)], NSMakePoint(x, y), _metaFont, MC(255, 255, 255, 0.55), NO);
+    MonStr([NSString stringWithFormat:@"pid %d · uid %ld · %ld 条连接 · %@", (int)_pid, (long)_uid,
+            (long)_sockets, MonUptime(_startedAt)], NSMakePoint(x, y), _metaFont, MC(255, 255, 255, 0.55), NO);
     y += 16.0;
+
+    // 进程介绍：这行是用户要的「这个进程是干什么的」。最多两行，多出来的用省略号收掉，
+    // 保证气泡高度固定、不会因为某条介绍长就压到屏幕上沿。
+    CGFloat innerW = NSWidth(b) - 2 * x;
+    if (_intro.length) {
+        NSInteger lines = [self introLineCount];
+        CGFloat h = MonLineHeight(_introFont) * lines;
+        MonPara(_intro, NSMakeRect(x, y, innerW, h), _introFont,
+                MC(228, 238, 248, 0.88), NSLineBreakByWordWrapping);
+        y += h;
+    }
+    if (_origin.length) {
+        MonPara(_origin, NSMakeRect(x, y + 1, innerW, MonLineHeight(_originFont)), _originFont,
+                MC(255, 255, 255, 0.46), NSLineBreakByTruncatingMiddle);
+        y += MonLineHeight(_originFont) + 1;
+    }
+    y += 6.0;
 
     struct { NSString *label; double v; NSInteger metric; NSString *text; } lines[] = {
         // 气泡里的 CPU 跟榜内同一把尺（占整机），后面补一句"占单核"：
         // 有人会拿原生活动监视器的 31.9%（那也是占一核）来对，两个数都摆着最省事。
         // _cpu < 0 是"还没有上一拍可比"的哨兵，印百分比会变成负数，印"—"。
-        { @"CPU", _cpu, DeskMonitorMetricCPU, _cpu < 0 ? @"—"
+        // 这里不写 "CPU 10s"：值那一行还塞了「单核 x%」，10s 再挤上去会和 12h 平均文字重叠。
+        // 窗口长度在 CPU 榜的行标题上始终可见（CPU 10s）。
+        { @"CPU", _cpu, DeskMonitorMetricCPU,
+            _cpu < 0 ? @"—"
             : [NSString stringWithFormat:@"%.1f%%（单核 %.1f%%）", MonCpuShare(_cpu), _cpu] },
         { @"内存", _mem, DeskMonitorMetricMemory,
-            _mem >= 1e9 ? [NSString stringWithFormat:@"%.1fG", _mem / 1e9]
-                        : [NSString stringWithFormat:@"%.0fM", _mem / 1048576.0] },
+            _mem >= 1073741824.0 ? [NSString stringWithFormat:@"%.1f GiB", _mem / 1073741824.0]
+            : _mem >= 1048576.0 ? [NSString stringWithFormat:@"%.0f MiB", _mem / 1048576.0]
+                                : [NSString stringWithFormat:@"%.0f KiB", MAX(0.0, _mem) / 1024.0] },
         // 能耗的分母是"全部进程的能耗合计"，气泡里也写出来（榜头已经写了"占全部"）。
         // _energy < 0 是哨兵（这一拍没法算），MonShare 会把它当 0 → 假零，改印"—"。
         { @"能耗（占全部）", _energy, DeskMonitorMetricEnergy, (self.energyTotal > 0 && _energy >= 0)
             ? [NSString stringWithFormat:@"%.0f%%", MonShare(_energy, self.energyTotal)] : @"—" },
-        { @"网络·连接", (double)_sockets, DeskMonitorMetricNetwork, [NSString stringWithFormat:@"%ld 条", (long)_sockets] },
+        { @"网络·流量", (_netInRate + _netOutRate), DeskMonitorMetricNetwork,
+            (_netInRate < 0 || _netOutRate < 0) ? @"—"
+            : [NSString stringWithFormat:@"↓%@ ↑%@", MonRateText(_netInRate), MonRateText(_netOutRate)] },
     };
     for (int i = 0; i < 4; i++) {
         y += 6.0;
@@ -1200,18 +1516,8 @@ static NSString *MonHistText(NSInteger metric, double avg, double covered, doubl
     [MC(255, 255, 255, 0.10) setStroke];
     [sep stroke];
     y += 6.0;
-    // 网络那一栏的数字最容易被问「这数的是什么」（用户原话："网络连接这个 59 5432 看不懂"），
-    // 所以悬停到网络行时，底行改成说清口径：这些是这个进程当前打开中的网络连接。
-    NSString *foot;
-    if (_histMetric == DeskMonitorMetricNetwork) {
-        foot = @"连接=该进程当前打开中的网络连接 · 双击看原生活动监视器";
-    } else {
-        foot = _histCovered > 0 && _histCovered < kDeskHistoryWindow * 0.98
-            ? [NSString stringWithFormat:@"12h 平均基于已记录的 %.1f 小时 · 双击看原生活动监视器",
-                                          _histCovered / 3600.0]
-            : @"12h 平均 = 过去 12 小时 · 双击看原生活动监视器";
-    }
-    MonStr(foot, NSMakePoint(x, y), MonText(9.0), MC(255, 255, 255, 0.55), NO);
+    // 网络那一栏现在主值是流量，底行给 12h 累计；连接数在上面的 pid 行。
+    MonStr([self historyFoot], NSMakePoint(x, y), MonText(9.0), MC(255, 255, 255, 0.55), NO);
 }
 
 @end

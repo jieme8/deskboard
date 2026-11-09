@@ -129,14 +129,24 @@ double VaultCardFillAlpha(DeskStyle style, double hoverK, double selK) {
     CGFloat hov = (CGFloat)MAX(0.0, MIN(1.0, hoverK));
     CGFloat sel = (CGFloat)MAX(0.0, MIN(1.0, selK));
     switch (style) {
+        case DeskStyleHUD:       // 无边玻璃：卡片不带自己的底，只留悬停/选中时的一层薄雾
+            return 0.02 + (hov * 0.06) + (sel * 0.04);
         case DeskStyleBare:      // 无底：卡片只剩一丝描边内的薄雾，文字靠投影撑住
-        case DeskStyleHUD:
             return 0.12 + (hov * 0.14) + (sel * 0.08);
         case DeskStyleFeather:
             return 0.30 + (hov * 0.14);
         default:                 // 实底卡
             return 0.54 + (hov * 0.16) + (sel * 0.10);
     }
+}
+
+void VaultDrawInkPlate(NSRect rect, CGFloat radius, CGFloat inkAlpha, CGFloat edgeAlpha) {
+    NSBezierPath *plate = [NSBezierPath bezierPathWithRoundedRect:rect xRadius:radius yRadius:radius];
+    [[VaultInk() colorWithAlphaComponent:inkAlpha] setFill];
+    [plate fill];
+    [[VaultCyan() colorWithAlphaComponent:edgeAlpha] setStroke];
+    plate.lineWidth = 1.0;
+    [plate stroke];
 }
 
 #pragma mark - 小图形
@@ -159,6 +169,31 @@ void VaultDrawReticle(NSRect rect, CGFloat inset, CGFloat len, NSColor *color,
         }
     }
     [p stroke];
+}
+
+void VaultDrawChip(NSRect r) {
+    [[VaultCyan() colorWithAlphaComponent:0.85] setStroke];
+    NSBezierPath *body = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(r, 3.0, 3.0)
+                                                        xRadius:2.5 yRadius:2.5];
+    body.lineWidth = 1.1;
+    [body stroke];
+    NSBezierPath *pins = [NSBezierPath bezierPath];
+    pins.lineWidth = 1.0;
+    for (int i = 0; i < 3; i++) {
+        CGFloat o = 5.0 + i * 3.0;
+        [pins moveToPoint:NSMakePoint(NSMinX(r) + o, NSMinY(r) + 0.5)];
+        [pins lineToPoint:NSMakePoint(NSMinX(r) + o, NSMinY(r) + 3.0)];
+        [pins moveToPoint:NSMakePoint(NSMinX(r) + o, NSMaxY(r) - 3.0)];
+        [pins lineToPoint:NSMakePoint(NSMinX(r) + o, NSMaxY(r) - 0.5)];
+        [pins moveToPoint:NSMakePoint(NSMinX(r) + 0.5, NSMinY(r) + o)];
+        [pins lineToPoint:NSMakePoint(NSMinX(r) + 3.0, NSMinY(r) + o)];
+        [pins moveToPoint:NSMakePoint(NSMaxX(r) - 3.0, NSMinY(r) + o)];
+        [pins lineToPoint:NSMakePoint(NSMaxX(r) - 0.5, NSMinY(r) + o)];
+    }
+    [[VaultCyan() colorWithAlphaComponent:0.6] setStroke];
+    [pins stroke];
+    [[VaultCyanBright() colorWithAlphaComponent:0.95] setFill];
+    NSRectFillUsingOperation(NSInsetRect(r, 6.5, 6.5), NSCompositingOperationSourceOver);
 }
 
 // 二十点宽的文件夹：背板往后错开一点，前板压在上面，内容线暗示里面有料

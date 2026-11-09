@@ -28,7 +28,7 @@ int main(void) {
         CFIndex n = CFArrayGetCount(a);
 
         struct { const char *name; double w, h; } kinds[3] = {
-            { "卡片面板", 600, 241 }, { "活动监视器", 432, 294 }, { "弹药库", 432, 294 }
+            { "卡片面板", 392, 383 }, { "活动监视器", 432, 294 }, { "弹药库", 432, 294 }
         };
         CGRect selfRect[3]; BOOL found[3] = { NO, NO, NO };
         for (CFIndex i = 0; i < n; i++) {

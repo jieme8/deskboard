@@ -149,6 +149,7 @@ NSString *VaultFormatCount(NSUInteger n) {
     NSMutableArray<DeskVaultItem *> *_items;
     dispatch_queue_t _io;        // 所有搬文件/写盘都在这条串行队列上
     NSUInteger _scanGeneration;  // 统计结果可能乱序回来，靠它丢弃过期的那批
+    NSMutableArray<NSString *> *_earlyLogs;  // 日志接管前先攒着，接上再补写
 }
 
 + (instancetype)shared {
@@ -161,21 +162,51 @@ NSString *VaultFormatCount(NSUInteger n) {
 - (instancetype)init {
     if ((self = [super init])) {
         _items = [NSMutableArray array];
+        _earlyLogs = [NSMutableArray array];
         _io = dispatch_queue_create("com.hujie.deskboard.vault", DISPATCH_QUEUE_SERIAL);
         [self reloadFromDisk];
     }
     return self;
 }
 
-- (NSString *)supportDir {
-    NSString *base = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory,
-                                                         NSUserDomainMask, YES).firstObject;
-    return [base stringByAppendingPathComponent:@"DeskBoard"];
+- (void)setLogHandler:(void (^)(NSString *))logHandler {
+    _logHandler = [logHandler copy];
+    if (!_logHandler) return;
+    NSArray<NSString *> *early;
+    @synchronized (self) {
+        early = [_earlyLogs copy];
+        [_earlyLogs removeAllObjects];
+    }
+    for (NSString *m in early) _logHandler(m);
 }
 
-- (NSString *)rootPath { return [[self supportDir] stringByAppendingPathComponent:@"Vault"]; }
+// 2026-10-21 实测：腾讯柠檬清理废纸篓里的旧 App 副本时，把
+// Application Support/DeskBoard、日志和偏好当"卸载残留"整体抹掉，库文件一起没了。
+NSString *DeskVaultRootForHome(NSString *home) {
+    return [home stringByAppendingPathComponent:@"DeskBoard Vault"];
+}
 
-- (NSString *)listPath { return [[self supportDir] stringByAppendingPathComponent:@"vault.json"]; }
+- (NSString *)rootPath { return DeskVaultRootForHome(NSHomeDirectory()); }
+
+// 清单跟着库走（隐藏文件），并在同目录留一份 .bak：写坏或误删主清单时还能恢复记录
+- (NSString *)listPath { return [self.rootPath stringByAppendingPathComponent:@".vault.json"]; }
+
+- (NSString *)backupListPath { return [[self listPath] stringByAppendingPathExtension:@"bak"]; }
+
+- (void)log:(NSString *)fmt, ... {
+    va_list ap;
+    va_start(ap, fmt);
+    NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:ap];
+    va_end(ap);
+    void (^handler)(NSString *) = _logHandler;
+    if (handler) {
+        handler(msg);
+        return;
+    }
+    @synchronized (self) {
+        if (_earlyLogs.count < 20) [_earlyLogs addObject:msg];
+    }
+}
 
 - (NSArray<DeskVaultItem *> *)items {
     @synchronized (self) { return [_items copy]; }
@@ -195,41 +226,89 @@ NSString *VaultFormatCount(NSUInteger n) {
         arr = a;
     }
     NSString *path = [self listPath];
-    dispatch_async(_io, ^{
-        NSData *d = [NSJSONSerialization dataWithJSONObject:@{@"items": arr}
-                                                   options:NSJSONWritingPrettyPrinted error:NULL];
-        if (!d) return;
-        [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent]
-                                 withIntermediateDirectories:YES attributes:nil error:NULL];
-        // 原子替换：中途被杀也不会留下半个 JSON
-        [d writeToFile:path options:NSDataWritingAtomic error:NULL];
-    });
+    NSString *backup = [self backupListPath];
+    // 清单只有几 KB，同步写完再返回：异步排队时进程一退，最后一条改动就丢了
+    NSData *d = [NSJSONSerialization dataWithJSONObject:@{@"items": arr}
+                                               options:NSJSONWritingPrettyPrinted error:NULL];
+    if (!d) return;
+    [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent]
+                             withIntermediateDirectories:YES attributes:nil error:NULL];
+    // 原子替换：中途被杀也不会留下半个 JSON
+    if (![d writeToFile:path options:NSDataWritingAtomic error:NULL]) {
+        [self log:@"清单写入失败：%@", path];
+        return;
+    }
+    [d writeToFile:backup options:NSDataWritingAtomic error:NULL];
 }
 
 - (void)reloadFromDisk {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *backup = [self backupListPath];
     NSData *d = [NSData dataWithContentsOfFile:[self listPath]];
+    BOOL usedBackup = NO;
+    if (!d) {
+        d = [NSData dataWithContentsOfFile:backup];
+        usedBackup = d != nil;
+    }
     NSArray *arr = nil;
     if (d) {
         id root = [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL];
         if ([root isKindOfClass:[NSDictionary class]]) arr = root[@"items"];
     }
+    if (![arr isKindOfClass:[NSArray class]] && !usedBackup) {
+        NSData *bd = [NSData dataWithContentsOfFile:backup];
+        id broot = bd ? [NSJSONSerialization JSONObjectWithData:bd options:0 error:NULL] : nil;
+        if ([broot isKindOfClass:[NSDictionary class]] && [broot[@"items"] isKindOfClass:[NSArray class]]) {
+            arr = broot[@"items"];
+            usedBackup = YES;
+        }
+    }
+
     NSMutableArray *live = [NSMutableArray array];
+    NSUInteger recorded = 0, missing = 0;
     if ([arr isKindOfClass:[NSArray class]]) {
-        NSFileManager *fm = [NSFileManager defaultManager];
         for (id raw in arr) {
             if (![raw isKindOfClass:[NSDictionary class]]) continue;
             DeskVaultItem *it = [DeskVaultItem itemWithDictionary:raw];
             if (!it) continue;
-            // 清单和真实文件对不上的（用户在 Finder 里手动删了库目录）直接丢弃，别占位置
-            if (![fm fileExistsAtPath:[self pathForItem:it]]) continue;
+            recorded++;
+            // 文件不在的条目先跳过；名字记下来，日志里能看出丢了多少
+            if (![fm fileExistsAtPath:[self pathForItem:it]]) { missing++; continue; }
             [live addObject:it];
         }
     }
+
+    // 认领库里没登记的东西：清单被删/写坏时，只要文件还在，卡片就能自己回来
+    NSUInteger adopted = 0;
+    NSMutableSet<NSString *> *known = [NSMutableSet set];
+    for (DeskVaultItem *it in live) [known addObject:it.storedName];
+    NSArray<NSString *> *entries = [fm contentsOfDirectoryAtPath:self.rootPath error:NULL];
+    for (NSString *name in entries) {
+        if ([name hasPrefix:@"."] || [known containsObject:name]) continue;
+        NSString *p = [self.rootPath stringByAppendingPathComponent:name];
+        VaultItemKind kind = VaultItemKindForPath(p);
+        if (kind == VaultItemKindNone) continue;
+        DeskVaultItem *it = [DeskVaultItem new];
+        it.name = name;
+        it.sourceName = name;
+        it.storedName = name;
+        it.kind = kind;
+        it.seed = (double)arc4random_uniform(100000) / 100000.0;
+        it.ingestedAt = (long long)[[NSDate date] timeIntervalSince1970];
+        [live addObject:it];
+        [known addObject:name];
+        adopted++;
+    }
+
     BOOL dirty;
     @synchronized (self) {
         dirty = live.count != _items.count;
         _items = live;
     }
+    if (usedBackup) [self log:@"主清单缺失或损坏，已从 %@ 恢复", backup.lastPathComponent];
+    if (missing) [self log:@"清单 %lu 条，%lu 条的文件已不在库里，已跳过",
+                      (unsigned long)recorded, (unsigned long)missing];
+    if (adopted) [self log:@"从库目录认领 %lu 项未登记的文件", (unsigned long)adopted];
     if (dirty) [self persist];
     dispatch_async(_io, ^{
         [[NSFileManager defaultManager] createDirectoryAtPath:self.rootPath

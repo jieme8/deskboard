@@ -1,0 +1,12 @@
+{
+  "base_resp": { "status_code": 0, "status_msg": "success" },
+  "op_credit_summary": {
+    "total_remaining_amount": 14816.862,
+    "free_remaining_amount": 14816.862,
+    "purchased_remaining_amount": 0
+  },
+  "plan_name": "",
+  "token_plan_tier": "Explore",
+  "is_pro_builder": false,
+  "expires_at": 1794441600000
+}

@@ -1,0 +1,1014 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23060d16'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%2370D8FF' stroke-width='3'/%3E%3C/svg%3E">
+<title>DeskBoard · 电池 BATT · 弹药库仪表瓷砖视觉稿</title>
+<style>
+:root{
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",Arial,sans-serif;
+  --mono:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Monaco,monospace;
+  --cyan:#70D8FF; --cyan-b:#B2EEFF; --paper:#E2F6FF; --muted:#7EB0CE;
+  --ink:#0A1A2A;
+  --batt:#70D8FF; --batt-b:#B2EEFF; --mint:#86E0BF;
+  --amber:#FFB26B; --red:#FF8A7A;
+  --ui:#CFE6F2; --ui-muted:#8FB0C4;
+  --card-w:364px; --card-h:142px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{
+  font-family:var(--font);color:var(--ui);
+  background:
+    radial-gradient(120% 80% at 18% 0%, rgba(38,86,130,.50), rgba(6,16,30,0) 55%),
+    radial-gradient(90% 70% at 88% 10%, rgba(74,58,128,.28), rgba(6,16,30,0) 60%),
+    linear-gradient(165deg,#081726 0%,#050d18 52%,#03080f 100%);
+  background-attachment:fixed;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:geometricPrecision;
+}
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:
+    linear-gradient(rgba(112,216,255,.030) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(112,216,255,.030) 1px,transparent 1px);
+  background-size:48px 48px;
+  mask-image:radial-gradient(120% 90% at 50% 0%,#000 20%,transparent 78%);
+  -webkit-mask-image:radial-gradient(120% 90% at 50% 0%,#000 20%,transparent 78%);
+}
+.page{position:relative;z-index:1;max-width:1240px;margin:0 auto;padding:0 28px 56px}
+.topbar{
+  position:sticky;top:0;z-index:80;display:flex;flex-wrap:wrap;align-items:center;gap:12px 22px;
+  padding:13px 0;background:rgba(5,13,24,.68);
+  backdrop-filter:blur(18px) saturate(1.1);-webkit-backdrop-filter:blur(18px) saturate(1.1);
+  border-bottom:.5px solid rgba(112,216,255,.14);
+}
+.brand{display:flex;align-items:center;gap:9px;font:600 13px/1.2 var(--font);color:#EDF9FF;letter-spacing:.2px}
+.brand .dot{width:6px;height:6px;border-radius:50%;background:var(--batt);box-shadow:0 0 9px rgba(112,216,255,.9)}
+.brand small{font:500 11px/1 var(--mono);color:#7FA6BC;letter-spacing:.08em}
+.top-hint{font:11px/1.5 var(--font);color:var(--ui-muted)}
+.top-chips{margin-left:auto;display:flex;gap:7px;flex-wrap:wrap}
+.chip{
+  font:600 10px/1 var(--mono);color:#CCEBFA;padding:5px 8px;border-radius:20px;
+  background:rgba(112,216,255,.07);border:.5px solid rgba(112,216,255,.24);white-space:nowrap;
+}
+.chip b{color:#F2FBFF;font-weight:600}
+.chip.acc{color:#BFEFFF;background:rgba(112,216,255,.08);border-color:rgba(112,216,255,.30)}
+
+.hero{padding:36px 0 8px}
+.kicker{font:600 10px/1 var(--mono);letter-spacing:.18em;color:#6E9AB4;text-transform:uppercase}
+h1{margin:10px 0 8px;font:600 30px/1.18 var(--font);letter-spacing:-.02em;color:#F3FBFF}
+.lede{margin:0;max-width:740px;font:13.5px/1.7 var(--font);color:#9FBDCE}
+.lede b{color:#E7F7FF;font-weight:600}
+.lede .acc{color:#B2EEFF;font-weight:600}
+
+.controls{display:flex;gap:14px;flex-wrap:wrap;margin-top:20px}
+.ctl-group{display:flex;align-items:center;gap:4px;padding:5px 7px;border-radius:10px;background:rgba(112,216,255,.045);border:.5px solid rgba(112,216,255,.13)}
+.ctl-label{font:600 9px/1 var(--mono);letter-spacing:.12em;color:#6F94A9;padding:0 5px;text-transform:uppercase}
+.ctl{border:0;background:transparent;color:#A9C7D8;font:500 11px/1 var(--font);padding:7px 10px;border-radius:7px;cursor:pointer;white-space:nowrap;transition:background .15s,color .15s}
+.ctl:hover{background:rgba(112,216,255,.08);color:#EAF8FF}
+.ctl.on{background:rgba(112,216,255,.14);color:#F2FBFF;box-shadow:inset 0 0 0 .5px rgba(112,216,255,.35)}
+
+.stage-row{display:flex;gap:28px;align-items:flex-end;flex-wrap:wrap;margin-top:24px}
+.stage{
+  position:relative;flex:1 1 100%;min-height:300px;border-radius:18px;overflow:hidden;
+  background:
+    radial-gradient(95% 120% at 12% 4%, rgba(78,132,168,.42), rgba(6,16,30,0) 58%),
+    radial-gradient(90% 100% at 88% 88%, rgba(112,78,148,.32), rgba(6,16,30,0) 62%),
+    linear-gradient(150deg,#0a1c2e 0%,#061220 48%,#040b14 100%);
+  border:.5px solid rgba(112,216,255,.10);
+  box-shadow:inset 0 0 70px rgba(1,7,15,.55);
+  padding:34px 38px 30px;
+}
+.stage::before{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:
+    radial-gradient(240px 180px at 22% 28%, rgba(160,220,255,.12), transparent 70%),
+    radial-gradient(300px 220px at 78% 76%, rgba(255,176,140,.07), transparent 72%),
+    linear-gradient(115deg, transparent 0 48%, rgba(255,255,255,.035) 49%, transparent 50% 100%);
+}
+.stage::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(120% 90% at 50% 0%,rgba(0,0,0,0),rgba(0,0,0,.34));
+}
+.stage-inner{position:relative;z-index:2;display:flex;gap:40px;align-items:center;justify-content:center;flex-wrap:wrap}
+.true-size{display:flex;flex-direction:column;gap:12px;align-items:flex-start}
+.zoom-wrap{position:relative}
+.zoom{transform:scale(1.8);transform-origin:top left}
+.zoom-slot{width:655px;height:256px;border-radius:12px}
+.caption{font:10.5px/1.5 var(--font);color:#86A9BD;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.caption b{color:#DCEEF9;font-weight:600}
+.caption .mono{font:10px var(--mono);color:#B9D9EA}
+.dim{
+  display:inline-flex;align-items:center;gap:6px;padding:3px 7px;border-radius:5px;
+  background:rgba(112,216,255,.06);border:.5px solid rgba(112,216,255,.18);
+  font:10px/1.4 var(--mono);color:#BBD8E7;white-space:nowrap;
+}
+
+/* ---------- 电池组件本体：弹药库仪表瓷砖 ---------- */
+.battery{
+  position:relative;flex:none;width:var(--card-w);height:var(--card-h);border-radius:14px;
+  isolation:isolate;
+}
+.battery .reticle{position:absolute;inset:0;z-index:3;pointer-events:none}
+.battery .reticle i{position:absolute;width:13px;height:13px;border:0 solid rgba(112,216,255,.45);border-radius:1px}
+.battery .reticle i:nth-child(1){left:6px;top:6px;border-left-width:1.2px;border-top-width:1.2px}
+.battery .reticle i:nth-child(2){right:6px;top:6px;border-right-width:1.2px;border-top-width:1.2px}
+.battery .reticle i:nth-child(3){left:6px;bottom:6px;border-left-width:1.2px;border-bottom-width:1.2px}
+.battery .reticle i:nth-child(4){right:6px;bottom:6px;border-right-width:1.2px;border-bottom-width:1.2px}
+.battery .slots{
+  position:relative;z-index:2;display:flex;gap:8px;
+  width:100%;height:100%;padding:12px;
+}
+.slot-tile{
+  position:relative;flex:1 1 0;min-width:0;height:100%;border-radius:8px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  background:rgba(8,26,46,.54);border:.5px solid rgba(112,216,255,.15);
+  overflow:hidden;
+}
+.tile-head{
+  position:absolute;left:8px;right:8px;top:7px;z-index:2;
+  display:flex;align-items:center;justify-content:space-between;gap:4px;
+}
+.dev-label{
+  font:600 7.5px/1 var(--mono);letter-spacing:.06em;color:rgba(178,222,244,.84);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.led{width:4px;height:4px;border-radius:50%;background:var(--tier,var(--batt));box-shadow:0 0 7px var(--tier,var(--batt));flex:none}
+.ring-wrap{position:relative;width:56px;height:56px;flex:none;margin-top:8px}
+.ring{display:block;width:56px;height:56px;overflow:visible}
+.ring .track{fill:none;stroke:rgba(112,216,255,.15);stroke-width:5.1}
+.ring .arc{fill:none;stroke-width:5.1;stroke-linecap:round;transition:stroke-dasharray .45s ease}
+.ring-icon{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  color:var(--paper);pointer-events:none;
+}
+.ring-icon svg{width:19px;height:19px;display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.pct{
+  display:block;width:100%;text-align:center;
+  font:600 12.5px/1 var(--mono);color:var(--paper);
+  font-variant-numeric:tabular-nums;letter-spacing:-.01em;white-space:nowrap;
+}
+.bolt{
+  position:absolute;right:-2px;top:-2px;width:16px;height:16px;border-radius:50%;
+  background:#071018;border:1.4px solid rgba(112,216,255,.85);
+  display:flex;align-items:center;justify-content:center;color:var(--batt-b);
+  box-shadow:0 0 9px rgba(112,216,255,.38),0 2px 5px rgba(0,0,0,.5);
+}
+.bolt svg{width:10px;height:10px;fill:currentColor}
+.slot-tile.hot{
+  border-color:rgba(112,216,255,.42);background:rgba(112,216,255,.075);
+  box-shadow:inset 0 0 16px rgba(112,216,255,.05);
+}
+.slot-tile.low{border-color:rgba(255,178,107,.30)}
+.slot-tile.crit{border-color:rgba(255,138,122,.34)}
+.slot-tile.charging{border-color:rgba(112,216,255,.30);background:rgba(112,216,255,.055)}
+.slot-tile.unknown .led{background:transparent;border:1px solid rgba(226,246,255,.38);box-shadow:none}
+.slot-tile.empty{border-style:dashed;border-color:rgba(112,216,255,.14);background:rgba(8,26,46,.28)}
+.slot-tile.empty .ring .track{stroke:rgba(112,216,255,.18);stroke-width:3;stroke-dasharray:4 6}
+.slot-tile.empty .dev-label{color:rgba(126,176,206,.52)}
+.slot-tile.empty .pct{color:rgba(126,176,206,.52)}
+.slot-tile.empty .led{background:transparent;border:1px solid rgba(112,216,255,.22);box-shadow:none}
+
+/* 四档外观：和系统卡 / 活动监视器共用同一套玻璃与瓷砖语义 */
+.battery.style-plate{
+  background:
+    linear-gradient(180deg,rgba(4,16,34,.50) 0%,rgba(4,16,34,.42) 16%,rgba(5,22,46,.28) 52%,rgba(5,22,46,.15) 100%);
+  border:.5px solid rgba(112,216,255,.16);
+  box-shadow:inset 0 0 22px rgba(2,10,22,.42),0 12px 34px rgba(0,0,0,.42);
+  backdrop-filter:blur(22px) saturate(1.2);
+  -webkit-backdrop-filter:blur(22px) saturate(1.2);
+}
+.battery.style-feather{background:none;border:none;box-shadow:none}
+.battery.style-feather::before{
+  content:"";position:absolute;inset:-26px;z-index:0;border-radius:50%;
+  background:radial-gradient(60% 60% at 50% 50%,rgba(2,9,18,.72) 0%,rgba(2,9,18,.56) 46%,rgba(2,9,18,0) 78%);
+  filter:blur(3px);
+}
+.battery.style-feather::after{
+  content:"";position:absolute;inset:0;z-index:1;border-radius:14px;pointer-events:none;
+  border:.5px solid rgba(112,216,255,.10);
+}
+.battery.style-feather .slot-tile{background:rgba(8,26,46,.30)}
+.battery.style-bare{background:none;border:none;box-shadow:none}
+.battery.style-bare .slot-tile{background:rgba(8,26,46,.12)}
+.battery.style-bare .ring .track{stroke:rgba(112,216,255,.20)}
+.battery.style-hud{background:none;border:none;box-shadow:none}
+.battery.style-hud .reticle{display:block}
+.battery.style-hud .reticle i{
+  width:16px;height:16px;border-color:rgba(112,216,255,.52);
+  animation:hudBracket 6s ease-in-out infinite;
+}
+.battery.style-hud .slot-tile{
+  background:none;border:none;border-radius:0;
+  border-top:.5px solid rgba(112,216,255,.16);
+}
+.battery.style-hud .slot-tile::before{
+  content:"";position:absolute;left:8px;right:8px;top:0;height:1px;pointer-events:none;
+  background:repeating-linear-gradient(90deg,rgba(112,216,255,0) 0 7px,rgba(112,216,255,.58) 7px 10px,rgba(112,216,255,0) 10px 17px);
+  background-size:17px 100%;
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);
+  mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);
+  animation:hudTop 3s linear infinite;opacity:.6;
+}
+.battery.style-hud .slot-tile:nth-child(2)::before{animation-delay:.3s}
+.battery.style-hud .slot-tile:nth-child(3)::before{animation-delay:.6s}
+.battery.style-hud .slot-tile:nth-child(4)::before{animation-delay:.9s}
+.battery.style-hud .slot-tile.hot{background:rgba(112,216,255,.06);border-top-color:rgba(112,216,255,.55)}
+.battery.style-hud .slot-tile.empty{background:none;border-top-color:rgba(112,216,255,.18)}
+.battery.style-hud .slot-tile.empty::before,
+.battery.style-hud .slot-tile.empty .hud-radar,
+.battery.style-hud .slot-tile.empty .hud-sweep,
+.battery.style-hud .slot-tile.empty .hud-scan{display:none}
+.battery.style-hud .slot-tile:not(.empty) .hud-radar{display:block}
+.battery.style-hud .slot-tile:not(.empty) .hud-sweep{display:block}
+.battery.style-hud .slot-tile:not(.empty) .hud-scan{display:block;animation:hudScan 6s cubic-bezier(.4,0,.2,1) infinite}
+.battery.style-hud .slot-tile:nth-child(1) .hud-scan{animation-delay:0s}
+.battery.style-hud .slot-tile:nth-child(2) .hud-scan{animation-delay:.25s}
+.battery.style-hud .slot-tile:nth-child(3) .hud-scan{animation-delay:.5s}
+.battery.style-hud .slot-tile:nth-child(4) .hud-scan{animation-delay:.75s}
+.battery.style-hud .slot-tile:not(.empty) .led{animation:hudLed 6s ease-in-out infinite}
+.battery.style-hud .slot-tile.charging .bolt{animation:hudBolt 1.8s ease-in-out infinite}
+.hud-radar,.hud-sweep,.hud-scan{display:none}
+.hud-radar{
+  position:absolute;inset:5px;border-radius:50%;pointer-events:none;z-index:0;
+  background:conic-gradient(from 0deg,transparent 0deg 286deg,rgba(112,216,255,.02) 292deg,rgba(112,216,255,.12) 336deg,rgba(112,216,255,.32) 356deg,rgba(178,238,255,.58) 360deg);
+  -webkit-mask:radial-gradient(circle,transparent 0 48%,#000 50% 100%);
+  mask:radial-gradient(circle,transparent 0 48%,#000 50% 100%);
+  animation:hudSpin 6s linear infinite;opacity:.60;
+}
+.hud-radar::after{
+  content:"";position:absolute;left:calc(50% - .5px);top:0;width:1px;height:50%;
+  transform-origin:bottom center;
+  background:linear-gradient(to top,rgba(178,238,255,0),rgba(178,238,255,.95));
+}
+.hud-sweep{
+  position:absolute;inset:0;border-radius:50%;pointer-events:none;z-index:2;
+  background:conic-gradient(from 0deg,transparent 0deg 334deg,rgba(178,238,255,0) 338deg,rgba(178,238,255,.35) 354deg,rgba(220,250,255,.95) 360deg);
+  -webkit-mask:radial-gradient(circle,transparent 0 70%,#000 72% 100%);
+  mask:radial-gradient(circle,transparent 0 70%,#000 72% 100%);
+  animation:hudSpin 6s linear infinite;opacity:.8;
+}
+.hud-scan{
+  position:absolute;left:10px;right:10px;top:22px;height:1px;pointer-events:none;z-index:0;
+  background:rgba(178,238,255,.5);
+  box-shadow:0 0 6px rgba(112,216,255,.45),0 0 2px rgba(178,238,255,.85);
+  opacity:0;
+}
+.battery.style-hud .ring-wrap{position:relative;z-index:1}
+.battery.style-hud .ring{position:relative;z-index:1}
+.battery.style-hud .ring-icon{z-index:3}
+.battery.style-hud .bolt{z-index:4}
+.battery.style-hud .hud-base{fill:none;stroke:rgba(112,216,255,.14);stroke-width:1}
+.battery.style-hud .tick{stroke-width:1.5;stroke-linecap:round}
+.battery.style-hud .tick.lit{animation:tickIn .5s cubic-bezier(.2,.8,.2,1) both;animation-delay:var(--d,0ms)}
+.battery.style-hud .hud-lead{filter:drop-shadow(0 0 5px currentColor);animation:hudLead 3s ease-in-out infinite}
+.battery.style-hud .hud-lead-halo{transform-box:fill-box;transform-origin:center;animation:hudHalo 3s ease-out infinite}
+@keyframes hudSpin{to{transform:rotate(360deg)}}
+@keyframes hudLead{0%,100%{opacity:.55}50%{opacity:1}}
+@keyframes hudHalo{0%{opacity:.55;transform:scale(.55)}70%{opacity:0;transform:scale(1.55)}100%{opacity:0;transform:scale(1.55)}}
+@keyframes hudLed{0%,100%{opacity:.55;box-shadow:0 0 3px var(--tier,var(--batt))}10%{opacity:1;box-shadow:0 0 11px var(--tier,var(--batt))}20%{opacity:.6;box-shadow:0 0 4px var(--tier,var(--batt))}28%{opacity:.95;box-shadow:0 0 9px var(--tier,var(--batt))}42%{opacity:.6;box-shadow:0 0 3px var(--tier,var(--batt))}}
+@keyframes hudScan{0%{transform:translateY(0);opacity:0}6%{opacity:.65}36%{transform:translateY(56px);opacity:.5}44%{opacity:0}100%{transform:translateY(56px);opacity:0}}
+@keyframes tickIn{0%{opacity:0;stroke-width:3}100%{opacity:1;stroke-width:1.5}}
+@keyframes hudTop{0%{background-position:0 0}100%{background-position:17px 0}}
+@keyframes hudBracket{0%,100%{opacity:.55}50%{opacity:1}}
+@keyframes hudBolt{0%,100%{box-shadow:0 0 6px rgba(112,216,255,.35),0 2px 5px rgba(0,0,0,.5)}50%{box-shadow:0 0 14px rgba(112,216,255,.75),0 2px 5px rgba(0,0,0,.5)}}
+body.no-motion .battery *{animation:none!important}
+.battery.style-feather .dev-label,.battery.style-bare .dev-label,
+.battery.style-feather .pct,.battery.style-bare .pct{text-shadow:0 1px 2px rgba(0,0,0,.90)}
+.battery.style-hud .dev-label,.battery.style-hud .pct{text-shadow:0 1px 0 rgba(0,0,0,.85)}
+.battery.style-feather .ring-icon svg,.battery.style-bare .ring-icon svg,.battery.style-hud .ring-icon svg{filter:drop-shadow(0 1px 2px rgba(0,0,0,.9))}
+
+/* ---------- 区块 ---------- */
+.section{margin-top:46px}
+.section-head{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:16px}
+.section-head h2{margin:0;font:600 18px/1.3 var(--font);color:#EDF9FF;letter-spacing:-.01em}
+.section-head p{margin:0;font:12px/1.6 var(--font);color:#8FB0C4;max-width:780px}
+.section-head .rule{flex:1;height:1px;background:linear-gradient(90deg,rgba(112,216,255,.22),rgba(112,216,255,0))}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+@media(max-width:980px){.grid2{grid-template-columns:1fr}}
+@media(max-width:900px){.stage-row{flex-direction:column;align-items:stretch}.zoom-wrap{display:none}}
+.panel{
+  position:relative;border-radius:14px;padding:20px;
+  background:rgba(7,18,32,.55);border:.5px solid rgba(112,216,255,.11);
+  box-shadow:inset 0 0 30px rgba(1,7,15,.4);
+}
+.panel h3{margin:0 0 8px;font:600 13px/1.4 var(--font);color:#E9F8FF}
+.panel p{margin:0;font:12px/1.65 var(--font);color:#93B3C6}
+.panel p+p{margin-top:6px}
+.panel .note{margin-top:10px;font:10.5px/1.6 var(--font);color:#7899AD}
+.panel .note b{color:#BBDCEA;font-weight:600}
+ul.tight{margin:8px 0 0;padding-left:16px}
+ul.tight li{font:12px/1.7 var(--font);color:#9FBDCE;margin:2px 0}
+ul.tight li b{color:#DCEFF9;font-weight:600}
+ul.tight li code{font:10.5px var(--mono);color:#B7DBEC;background:rgba(112,216,255,.07);padding:1px 4px;border-radius:3px}
+
+.style-stage{
+  position:relative;display:flex;align-items:center;justify-content:center;
+  min-height:200px;border-radius:12px;margin-bottom:14px;overflow:hidden;
+  background:
+    radial-gradient(90% 130% at 18% 0%, rgba(80,140,180,.55), transparent 58%),
+    radial-gradient(80% 110% at 88% 100%, rgba(130,86,150,.38), transparent 62%),
+    linear-gradient(155deg,#0d2135 0%,#07111d 58%,#03070d 100%);
+}
+.style-stage::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(110% 90% at 50% 0%,rgba(0,0,0,0),rgba(0,0,0,.30));
+}
+.style-stage .battery{position:relative;z-index:2}
+.state-stage{
+  display:flex;align-items:center;justify-content:center;
+  min-height:186px;border-radius:12px;margin-bottom:14px;overflow:hidden;
+  background:
+    radial-gradient(80% 120% at 12% 0%, rgba(64,116,152,.35), transparent 60%),
+    radial-gradient(80% 100% at 90% 100%, rgba(112,72,132,.25), transparent 62%),
+    linear-gradient(155deg,#0a1b2c 0%,#050d17 62%,#02060b 100%);
+}
+.hud-stage{
+  position:relative;display:flex;align-items:center;justify-content:center;
+  min-height:340px;border-radius:12px;overflow:auto;
+  background:
+    radial-gradient(80% 130% at 20% 0%, rgba(76,132,168,.48), transparent 58%),
+    radial-gradient(70% 110% at 86% 100%, rgba(112,76,140,.30), transparent 62%),
+    linear-gradient(155deg,#0b1e31 0%,#06101b 60%,#02060b 100%);
+}
+.hud-stage::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(110% 90% at 50% 0%,rgba(0,0,0,0),rgba(0,0,0,.28));
+}
+.hud-zoom-slot{position:relative;width:728px;height:284px;flex:none;z-index:2}
+.hud-zoom{position:absolute;left:0;top:0;width:364px;height:142px;transform:scale(2);transform-origin:top left}
+.hud-legend{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-top:18px}
+@media(max-width:1040px){.hud-legend{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.hud-item{position:relative;padding:12px 12px 12px 14px;border-radius:9px;background:rgba(112,216,255,.045);border:.5px solid rgba(112,216,255,.14)}
+.hud-item b{display:block;font:600 11px/1.3 var(--font);color:#DFF4FF}
+.hud-item p{margin:5px 0 0;font:10.5px/1.6 var(--font);color:#8FB0C4}
+.hud-num{position:absolute;right:10px;top:9px;font:600 9px/1 var(--mono);color:#6F94A9;letter-spacing:.08em}
+.hud-item .swatch{display:inline-block;width:16px;height:2px;border-radius:1px;background:var(--batt);margin-right:6px;vertical-align:middle;box-shadow:0 0 8px rgba(112,216,255,.5)}
+.badge{display:inline-block;padding:2px 6px;border-radius:4px;font:600 9px/1.4 var(--mono);letter-spacing:.04em}
+.badge.keep{background:rgba(112,216,255,.10);border:.5px solid rgba(112,216,255,.26);color:#BDE6F7}
+.badge.drop{background:rgba(255,138,122,.08);border:.5px solid rgba(255,138,122,.26);color:#FFB8AC}
+.badge.new{background:rgba(112,216,255,.09);border:.5px solid rgba(112,216,255,.28);color:#BDE6F7}
+
+/* ---------- 悬停 ---------- */
+.hover-panel{padding:10px 20px}
+.hover-demo{display:flex;gap:30px;align-items:center;flex-wrap:wrap;padding:22px 0}
+.hover-demo + .hover-demo{border-top:.5px solid rgba(112,216,255,.09)}
+.hover-side{display:flex;flex-direction:column;gap:11px;align-items:flex-start}
+.bubble{
+  width:250px;border-radius:12px;padding:13px 14px;flex:none;position:relative;
+  background:rgba(4,18,36,.92);border:.5px solid rgba(112,216,255,.24);
+  box-shadow:0 16px 40px rgba(0,0,0,.5),inset 0 0 25px rgba(2,10,22,.35);
+}
+.bubble::after{
+  content:"";position:absolute;left:-7px;top:74px;width:12px;height:12px;transform:rotate(45deg);
+  background:rgba(4,18,36,.92);border-left:.5px solid rgba(112,216,255,.24);border-bottom:.5px solid rgba(112,216,255,.24);
+}
+.b-name{font:600 13px/1.2 var(--font);color:#F2FBFF;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.b-sub{font:9.5px/1.4 var(--mono);color:#8FB6CB;margin-top:3px;white-space:nowrap}
+.b-hero{display:flex;align-items:baseline;gap:7px;margin-top:9px}
+.b-hero b{font:600 21px/1 var(--mono);color:var(--batt);letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.b-hero span{font:10px/1.2 var(--font);color:#9FC0D2}
+.b-rows{margin-top:9px;display:grid;grid-template-columns:1fr 1fr;gap:4px 10px}
+.b-row{display:flex;justify-content:space-between;gap:6px;font:9.5px/1.5 var(--font);color:#8FB0C4;border-bottom:.5px solid rgba(112,216,255,.08);padding-bottom:2px}
+.b-row b{font:500 9.5px var(--mono);color:#DDF2FC;white-space:nowrap}
+.b-hist{margin-top:7px;font:9.5px/1.5 var(--font);color:#8FB0C4}
+.b-hist b{font:500 10px var(--mono);color:#B6E7FF}
+.b-foot{margin-top:7px;font:8.5px/1.4 var(--mono);color:#6F94A9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------- 桌面摆位 ---------- */
+.desk-wrap{overflow-x:auto;padding:2px 0}
+.desk{
+  position:relative;width:832px;height:520px;border-radius:14px;overflow:hidden;flex:none;
+  background:
+    radial-gradient(70% 90% at 18% 6%, rgba(80,136,168,.45), transparent 58%),
+    radial-gradient(70% 90% at 88% 92%, rgba(100,66,120,.35), transparent 64%),
+    linear-gradient(155deg,#0c1e30 0%,#06101b 58%,#03070d 100%);
+  border:.5px solid rgba(112,216,255,.12);
+}
+.desk-canvas{position:absolute;left:0;top:0;width:1512px;height:945px;transform:scale(.55);transform-origin:top left}
+.desk-menubar{position:absolute;left:0;top:0;width:1512px;height:24px;background:rgba(3,8,14,.62);border-bottom:.5px solid rgba(255,255,255,.06)}
+.dw{position:absolute;border-radius:16px;padding:18px 20px;display:flex;flex-direction:column;gap:6px}
+.dw b{font:600 21px/1.15 var(--font);color:#EAF8FF;letter-spacing:-.01em}
+.dw span{font:500 16px/1.2 var(--mono);color:rgba(200,232,248,.70)}
+.dw.cyan{border:1px dashed rgba(112,216,255,.45);background:rgba(112,216,255,.055)}
+.dw.new{border:1px solid rgba(112,216,255,.78);background:rgba(112,216,255,.075);box-shadow:0 0 34px rgba(112,216,255,.12)}
+.dw.new b{color:#DDF5FF}
+.dw .tag{
+  position:absolute;right:14px;top:14px;font:600 15px/1 var(--mono);letter-spacing:.08em;
+  color:#BDE9FA;background:rgba(112,216,255,.12);border:.5px solid rgba(112,216,255,.35);
+  padding:4px 7px;border-radius:6px;
+}
+.desk-caption{margin-top:10px;font:10.5px/1.6 var(--font);color:#7899AD}
+.desk-caption b{color:#BBDCEA;font-weight:600}
+
+/* ---------- 规格 ---------- */
+table.spec{width:100%;border-collapse:collapse;font:11.5px/1.6 var(--font)}
+table.spec th,table.spec td{text-align:left;vertical-align:top;padding:8px 10px;border-bottom:.5px solid rgba(112,216,255,.10)}
+table.spec th{font:600 9.5px/1.4 var(--mono);letter-spacing:.10em;color:#7FA6BC;text-transform:uppercase;border-bottom-color:rgba(112,216,255,.22)}
+table.spec td{color:#A9C7D8}
+table.spec td:first-child{color:#DFF2FC;font-weight:600;white-space:nowrap}
+table.spec code{font:10.5px var(--mono);color:#B7DBEC;background:rgba(112,216,255,.07);padding:1px 4px;border-radius:3px}
+table.spec .new{color:#BDE9FA}
+table.spec .old{color:#7E9FB2}
+
+/* ---------- 菜单 ---------- */
+.menu-demo{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start}
+.mac-menu{
+  width:252px;padding:5px;border-radius:9px;background:rgba(30,38,50,.94);
+  border:.5px solid rgba(255,255,255,.14);box-shadow:0 20px 45px rgba(0,0,0,.5);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);flex:none;
+}
+.mac-menu .mi{display:flex;align-items:center;gap:8px;padding:4px 9px;border-radius:4px;font:12px/1.5 var(--font);color:#E6EDF4;white-space:nowrap}
+.mac-menu .mi .sig{width:12px;color:#DCE6F0;font:600 11px var(--font);text-align:center;flex:none}
+.mac-menu .mi .arrow{margin-left:auto;color:#9FAAB5;font:10px var(--font)}
+.mac-menu .mi.sep{padding:0;margin:4px 9px;height:.5px;background:rgba(255,255,255,.12)}
+.mac-menu .mi.hi{background:rgba(112,216,255,.20);color:#FFFFFF}
+.mac-menu .mi.on .sig{color:#B2EEFF}
+.menu-copy{flex:1 1 420px;min-width:280px}
+
+.footer{
+  margin-top:44px;padding:18px 0 0;border-top:.5px solid rgba(112,216,255,.12);
+  display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;font:10.5px/1.7 var(--font);color:#6F91A6;
+}
+.footer b{color:#A9C9DA;font-weight:600}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span>DeskBoard <small>/ BATTERY</small></div>
+    <div class="top-hint">电池 BATT · 无边玻璃动效优化</div>
+    <div class="top-chips">
+      <span class="chip acc"><b>364 × 142</b> pt</span>
+      <span class="chip">4 块仪表瓷砖</span>
+      <span class="chip">环 <b>56</b> / 线 <b>4.5</b></span>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="kicker">BATTERY · INSTRUMENT TILES</div>
+      <h1>四环保留，外观换成弹药库那套</h1>
+      <p class="lede">
+        四格等权圆环还在，但外观完全走 DeskBoard 的弹药库语言。这一版重点把 <b>HUD 无边玻璃</b>做成真正的仪器：
+        <span class="acc">分段刻度环、雷达扫描、瓷砖扫描线、呼吸 LED、弧端光点</span>——不加底板也能看出在运行。其他三档保持静态。
+      </p>
+
+      <div class="controls">
+        <div class="ctl-group" id="state-btns">
+          <span class="ctl-label">STATE</span>
+        </div>
+        <div class="ctl-group" id="style-btns">
+          <span class="ctl-label">STYLE</span>
+        </div>
+        <div class="ctl-group" id="motion-btns">
+          <span class="ctl-label">MOTION</span>
+        </div>
+      </div>
+
+      <div class="stage-row">
+        <div class="stage">
+          <div class="stage-inner">
+            <div class="true-size">
+              <div id="hero-widget"></div>
+              <div class="caption">
+                <b>1× 实际大小</b>
+                <span class="dim">364 × 142 pt</span>
+                <span class="dim">圆角 14</span>
+              </div>
+            </div>
+            <div class="zoom-wrap">
+              <div class="zoom-slot"><div class="zoom" id="hero-zoom"></div></div>
+            </div>
+          </div>
+          <div class="caption" style="margin-top:16px">
+            <b>几何：</b>
+            <span class="dim">瓷砖 79 × 118</span>
+            <span class="dim">间距 8</span>
+            <span class="dim">环 56 / 线 4.5</span>
+            <span class="dim">百分比 12.5 等宽</span>
+            <span class="dim">准星 13</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>四档外观</h2>
+        <p>和系统状态卡、活动监视器共用同一套 DeskStyle。电池不新造皮肤，只换颜色和内容；<b>常驻动效只在 HUD 档出现</b>，其余三档保持静止。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="grid2" id="style-grid"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>无边玻璃 · 动效拆解</h2>
+        <p>HUD 档不加底板、不加边框，靠分段刻度、雷达扫描、扫描线、呼吸 LED 和弧端光点表达科技感；空槽不参与动效。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="panel">
+        <div class="hud-stage">
+          <div class="hud-zoom-slot"><div class="hud-zoom"><div id="hud-hero"></div></div></div>
+        </div>
+        <div class="hud-legend">
+          <div class="hud-item"><span class="hud-num">01</span><b><span class="swatch"></span>分段刻度环</b><p>80% → 26/32 格点亮；切换状态时按 10ms 逐格上电，弧端光点 3s 呼吸。</p></div>
+          <div class="hud-item"><span class="hud-num">02</span><b><span class="swatch"></span>雷达扫描</b><p>环内 conic 扫描 6s 一圈，只在有设备的瓷砖里出现。</p></div>
+          <div class="hud-item"><span class="hud-num">03</span><b><span class="swatch"></span>瓷砖扫描线</b><p>6s 一拍，前 2.4s 从环顶扫到环底；四格错峰 0.25s，空槽不扫。</p></div>
+          <div class="hud-item"><span class="hud-num">04</span><b><span class="swatch"></span>LED 双脉冲</b><p>6s 一拍，前 2.5s 双闪；正常青、低电琥珀、过低红，档位直接换色。</p></div>
+          <div class="hud-item"><span class="hud-num">05</span><b><span class="swatch"></span>顶线数据流</b><p>3s 循环，像数据包沿瓷砖顶线流过；HUD 的「无边框」靠这条线立住。</p></div>
+        </div>
+        <div class="note" style="margin-top:14px">
+          <b>动效只在 HUD 档：</b>约 24fps，隐藏即停；菜单「HUD 动效」可关（<code>BatteryHUDMotion</code>）。其余三档仍是静态，避免整块桌面都在动。
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>六种状态</h2>
+        <p>本机固定占第一格，其余三格给外设；空槽只代表外设未连接。六种状态统一用 HUD 档演示，方便同时看动效和档位色。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="grid2" id="state-grid"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>悬停：细节不占瓷砖</h2>
+        <p>悬停演示也用 HUD 档：瓷砖顶线提亮，气泡仍是应用的深色玻璃。设备名、状态、剩余/充满时间、健康度、AirPods 左右耳与盒，全部放 250pt 气泡。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="panel hover-panel">
+        <div class="hover-demo">
+          <div id="hover-mac-widget"></div>
+          <div class="hover-side">
+            <div class="bubble">
+              <div class="b-name">MacBook Pro</div>
+              <div class="b-sub">内置电池 · BATT-01</div>
+              <div class="b-hero"><b>80%</b><span>交流电 · 未充电</span></div>
+              <div class="b-rows">
+                <div class="b-row"><span>剩余时间</span><b>—</b></div>
+                <div class="b-row"><span>充满时间</span><b>—</b></div>
+                <div class="b-row"><span>设计容量</span><b>6,249 mAh</b></div>
+                <div class="b-row"><span>循环次数</span><b>56</b></div>
+              </div>
+              <div class="b-hist">电池温度 <b>30.0°C</b> · 采样 <b>12:48</b></div>
+              <div class="b-foot">系统设置 › 电池</div>
+            </div>
+            <div class="caption">
+              <b>悬停任意有设备的瓷砖</b><br>
+              <span style="color:#7E9FB2">瓷砖描边提亮，气泡放在鼠标左侧</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="hover-demo">
+          <div id="hover-airpods-widget"></div>
+          <div class="hover-side">
+            <div class="bubble">
+              <div class="b-name">AirPods Pro</div>
+              <div class="b-sub">蓝牙 · 一槽三值</div>
+              <div class="b-hero"><b>82%</b><span>取较低一侧</span></div>
+              <div class="b-rows">
+                <div class="b-row"><span>左耳</span><b>84%</b></div>
+                <div class="b-row"><span>右耳</span><b>82%</b></div>
+                <div class="b-row"><span>充电盒</span><b>96%</b></div>
+                <div class="b-row"><span>状态</span><b>已连接</b></div>
+              </div>
+              <div class="b-hist">最后在线 <b>12:47</b> · 来源 <b>SPBluetooth</b></div>
+              <div class="b-foot">系统设置 › 蓝牙</div>
+            </div>
+            <div class="caption">
+              <b>AirPods 只占一格</b><br>
+              <span style="color:#7E9FB2">左右耳和盒不抢槽位，细节在气泡里</span>
+            </div>
+          </div>
+        </div>
+        <div class="caption" style="padding:0 0 18px;color:#7899AD">
+          <b>空槽悬停：</b>只写「未连接设备」，不画假环、不弹 0%；iPhone / Apple Watch 写「无公开接口」。
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>桌面摆位</h2>
+        <p>364 宽、142 高，默认贴在系统状态卡正下方 16pt；和其余四块一样按屏、按分辨率独立存档。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="panel">
+        <div class="desk-wrap">
+          <div class="desk">
+            <div class="desk-canvas">
+              <div class="desk-menubar"></div>
+              <div class="dw cyan" style="left:16px;top:40px;width:700px;height:132px">
+                <b>签到中心</b><span>700 × 132</span>
+              </div>
+              <div class="dw cyan" style="left:1224px;top:40px;width:272px;height:142px">
+                <b>系统状态卡</b><span>272 × 142</span>
+              </div>
+              <div class="dw new" style="left:1132px;top:198px;width:364px;height:142px">
+                <span class="tag">NEW</span>
+                <b>电池 BATT</b><span>364 × 142</span>
+              </div>
+              <div class="dw cyan" style="left:936px;top:599px;width:560px;height:330px">
+                <b>活动监视器</b><span>560 × 330</span>
+              </div>
+              <div class="dw cyan" style="left:16px;top:635px;width:432px;height:294px">
+                <b>弹药库</b><span>432 × 294</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="desk-caption">
+          1512 × 945 可视区示意（0.55 倍）。电池卡与系统状态卡同右边距，中间固定 16pt；不抢四角，也不压活动监视器。
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>几何与字号</h2>
+        <p>所有数值都是 pt；窗口、离线预览和校验工具共用同一套常量。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="grid2">
+        <div class="panel">
+          <h3>版面</h3>
+          <table class="spec">
+            <tr><th>项目</th><th>值</th><th>说明</th></tr>
+            <tr><td>卡片</td><td class="new">364 × 142</td><td>和系统卡同高，四格固定</td></tr>
+            <tr><td>外边距</td><td class="new">12</td><td>四角准星留出 6</td></tr>
+            <tr><td>瓷砖</td><td class="new">79 × 118</td><td>4 × 79 + 3 × 8 + 2 × 12 = 364</td></tr>
+            <tr><td>圆环</td><td class="new">56 / 4.5</td><td>12 点起顺时针，圆头</td></tr>
+            <tr><td>图标</td><td class="new">19pt</td><td>SF Symbols，纸白色，居中</td></tr>
+            <tr><td>标签 / 数值</td><td class="new">7.5 / 12.5</td><td>等宽；标签带 .06em 字距</td></tr>
+            <tr><td>圆角 / 准星</td><td class="new">14 / 13</td><td>和活动监视器简略模式同款</td></tr>
+            <tr><td>默认位</td><td class="new">右上 + dy 174</td><td>系统卡下方 16pt</td></tr>
+            <tr><td>HUD 动效</td><td class="new">6s 主循环</td><td>雷达 / 扫描 / LED 6s，光点 / 顶线 3s；刻度逐格 10ms；约 24fps，隐藏即停</td></tr>
+          </table>
+        </div>
+        <div class="panel">
+          <h3>颜色与状态</h3>
+          <table class="spec">
+            <tr><th>状态</th><th>主色</th><th>瓷砖 / 文字</th></tr>
+            <tr><td>正常</td><td class="new">#70D8FF</td><td>应用青；LED + 弧线</td></tr>
+            <tr><td>偏低 10–20%</td><td class="new">#FFB26B</td><td>琥珀描边 + LED</td></tr>
+            <tr><td>低 &lt;10%</td><td class="new">#FF8A7A</td><td>红色描边 + LED</td></tr>
+            <tr><td>充电中</td><td class="new">青 + ⚡</td><td>右上 16pt 徽标</td></tr>
+            <tr><td>读数未知</td><td class="old">只留轨道</td><td>图标 + 「—」，空心 LED</td></tr>
+            <tr><td>空槽</td><td class="old">虚线瓷砖</td><td>「空槽」+「—」，空心 LED</td></tr>
+          </table>
+          <div class="note">正常色是<b>应用的青</b>，不是官方电池绿 <code>#34D058</code>；空槽也不再画官方那种纯暗环。低电时数字仍白，颜色由环、LED 和瓷砖描边承担。</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>菜单与存档</h2>
+        <p>沿用现有组件的独立存档、全局锁定和多屏摆位；第一版不做调角和透明度。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="panel menu-demo">
+        <div class="mac-menu">
+          <div class="mi"><span class="sig">✓</span>显示 / 隐藏</div>
+          <div class="mi"><span class="sig"></span>外观<span class="arrow">›</span></div>
+          <div class="mi hi on"><span class="sig">✓</span>HUD 动效</div>
+          <div class="mi"><span class="sig"></span>立即刷新</div>
+          <div class="mi sep"></div>
+          <div class="mi"><span class="sig"></span>打开电池设置</div>
+          <div class="mi"><span class="sig"></span>打开蓝牙设置</div>
+          <div class="mi"><span class="sig"></span>恢复默认位置（系统卡下方）</div>
+        </div>
+        <div class="menu-copy">
+          <ul class="tight">
+            <li><b>存档键：</b><code>BatteryHidden</code> / <code>BatteryStyle</code> / <code>BatteryPlaces</code> / <code>BatteryHUDMotion</code>。</li>
+            <li><b>摆位：</b>新增 <code>DeskPlaceKindBattery</code>；右上角 + <code>dy 174</code>，走现有夹紧逻辑。</li>
+            <li><b>锁定：</b>和其余四块共用 <code>LayoutLocked</code>；上锁时电池卡也落档。</li>
+            <li><b>点击：</b>有设备的瓷砖打开对应系统设置；按住移动超过 3pt 仍是拖组件。</li>
+            <li><b>采样：</b>本机 30s、Magic 外设 60s、AirPods 120s；插拔电源立即刷新，隐藏时暂停。</li>
+            <li><b>不做：</b>充电上限/充电管理没有公开 API，只提供「打开电池设置」深链，不画假开关。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>和数据源的对应</h2>
+        <p>能读到的进瓷砖，读不到就留空；所有「未知」都印「—」，不印 0。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="panel">
+        <ul class="tight">
+          <li><b>内建电池：</b>复用 <code>DeskStats</code> 的 IOPS 读数（百分比 / 交流电 / 充电 / 充满 / 剩余分钟），健康度走 <code>AppleSmartBattery</code>（设计容量、循环次数、温度）。本机实测 <b>80% · 交流电 · 未充电</b>。</li>
+          <li><b>Magic 外设：</b>IORegistry <code>AppleDeviceManagementHIDEventService</code> 的 <code>BatteryPercent</code>，60 秒一采，零权限。</li>
+          <li><b>AirPods：</b><code>system_profiler -json SPBluetoothDataType</code> 后台 120 秒一采，解析左/右/盒；解析失败只影响这一格，不影响其余三格。</li>
+          <li><b>iPhone / Apple Watch：</b>原生组件走 Continuity/iCloud 私有通道，没有公开接口；本方案不做，也不画假数据。</li>
+          <li><b>顺序：</b>内建电池固定第一格，之后是 AirPods → 蓝牙耳机 → Magic Mouse → Magic Keyboard → Magic Trackpad → 其他 HID；超过 4 个取前 4，悬停提示「还有 N 个」。</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>改动落点</h2>
+        <p>设计确认后再动代码；下面是这次会碰到的文件。</p>
+        <div class="rule"></div>
+      </div>
+      <div class="panel">
+        <ul class="tight">
+          <li><code>battery.h / .m</code> — 设备模型、优先级、内建电池健康度、Magic 外设与 AirPods provider。</li>
+          <li><code>battery_view.h / .m</code> — 364 × 142 仪表瓷砖、四角准星、档位色、空槽/未知、悬停气泡、点击设置；HUD 档单独一套分段刻度与动效层。</li>
+          <li><code>main.m</code> — 第五块窗口组、菜单、<code>BatteryPlaces</code>、<code>BatteryHUDMotion</code>、锁定、屏幕变更、点击/拖动。</li>
+          <li><code>places.h</code> — 新增 <code>DeskPlaceKindBattery</code>，默认右上 + <code>dy 174</code>。</li>
+          <li><code>tools/preview_battery.m</code> — 离线输出六种状态 × 四档外观。</li>
+          <li><code>tools/verify_battery.m</code> — 瓷砖等宽、环径/线宽、百分比居中、档位阈值、未知印「—」、优先级截断。</li>
+          <li><code>tools/dump_window.m</code> — 按 364 × 142 识别电池窗，和 272 × 142 / 560 × 330 区分。</li>
+          <li><code>build.sh</code> / <code>README.md</code> — 编译清单、组件说明、菜单表。</li>
+        </ul>
+        <div class="note"><b>验收底线：</b>本机真机必须出「1 块亮瓷砖 80% + 3 块虚线空槽」，和参考图的四格布局同构；只有 HUD 档有常驻动效，约 24fps，隐藏即停，菜单可关。</div>
+        <div class="note"><b>老卡片先不动：</b>系统状态卡表尾的电池文字暂时保留，避免牵动已验证版面；新组件跑稳后再单独讨论要不要撤掉，免得同一块屏两处各写一个电池数。</div>
+      </div>
+    </section>
+
+    <div class="footer">
+      <div><b>说明：</b>这是 HTML 近似稿，用于确认版面、颜色和信息层级；玻璃采样、壁纸透出、文字阴影以 AppKit 实际渲染为准。</div>
+      <div>DeskBoard · 电池 BATT · 2026-11-09</div>
+    </div>
+  </main>
+</div>
+
+<script>
+const C = 2 * Math.PI * 29.5;
+
+const ICONS = {
+  mac: '<rect x="3.5" y="5" width="17" height="11" rx="1.8"/><path d="M2 18.5h20"/>',
+  airpods: '<path d="M8.2 4.6c-1.9 0-3.2 1.4-3.2 3.3v5.2c0 1.8 1.3 3.2 3.2 3.2s3.2-1.4 3.2-3.2V7.9c0-1.9-1.3-3.3-3.2-3.3z"/><path d="M15.8 4.6c1.9 0 3.2 1.4 3.2 3.3v5.2c0 1.8-1.3 3.2-3.2 3.2s-3.2-1.4-3.2-3.2V7.9c0-1.9 1.3-3.3 3.2-3.3z"/><path d="M8.2 16.3v3.1"/><path d="M15.8 16.3v3.1"/>',
+  mouse: '<rect x="8" y="3" width="8" height="18" rx="4"/><path d="M12 3.2v6.5"/>',
+  keyboard: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M9 10h.01M12 10h.01M15 10h.01M18 10h.01"/><path d="M7 13.5h10"/>',
+  trackpad: '<rect x="4" y="6.5" width="16" height="11" rx="3"/><path d="M4 13h16"/>',
+  headphones: '<path d="M4.5 13.5v-1.7a7.5 7.5 0 0 1 15 0v1.7"/><rect x="3" y="12.5" width="4.2" height="7.5" rx="2.1"/><rect x="16.8" y="12.5" width="4.2" height="7.5" rx="2.1"/>',
+  phone: '<rect x="7" y="2.5" width="10" height="19" rx="2.6"/><path d="M10 5h4"/>',
+  watch: '<rect x="7" y="6.5" width="10" height="11" rx="3"/><path d="M9 3h6M9 21h6"/>',
+  generic: '<circle cx="12" cy="12" r="8"/><path d="M12 8.5v4M12 16h.01"/>'
+};
+
+const BOLT = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>';
+
+const STATES = [
+  {
+    id:'single', label:'单设备',
+    title:'单设备（本机）',
+    desc:'只有本机瓷砖亮灯，其余三格保留虚线空槽——不再画官方那种纯暗环。',
+    items:[{kind:'mac', label:'本机', pct:80}]
+  },
+  {
+    id:'pair', label:'双设备',
+    title:'双设备',
+    desc:'本机固定第一格，AirPods 占第二格；另外两格仍是虚线空槽。',
+    items:[
+      {kind:'mac', label:'本机', pct:80},
+      {kind:'airpods', label:'耳机', pct:82}
+    ]
+  },
+  {
+    id:'four', label:'四设备',
+    title:'四设备',
+    desc:'本机 + AirPods + 鼠标 + 键盘；AirPods 只占一格，左右耳和盒在悬停里。',
+    items:[
+      {kind:'mac', label:'本机', pct:80},
+      {kind:'airpods', label:'耳机', pct:82},
+      {kind:'mouse', label:'鼠标', pct:64},
+      {kind:'keyboard', label:'键盘', pct:45}
+    ]
+  },
+  {
+    id:'charging', label:'充电中',
+    title:'充电中',
+    desc:'瓷砖描边和闪电徽标一起转青；百分比不变，悬停给充满时间。',
+    items:[{kind:'mac', label:'本机', pct:62, charging:true}]
+  },
+  {
+    id:'low', label:'低电',
+    title:'低电与档位',
+    desc:'10–20% 琥珀、<10% 红；数字仍白，环、LED 和瓷砖描边承担档位色。',
+    items:[
+      {kind:'mac', label:'本机', pct:8},
+      {kind:'airpods', label:'耳机', pct:15},
+      {kind:'mouse', label:'鼠标', pct:64}
+    ]
+  },
+  {
+    id:'unknown', label:'读数未知',
+    title:'读数未知',
+    desc:'设备连着但读不到电量：环只留轨道、数字印「—」，和虚线空槽分开。',
+    items:[
+      {kind:'mac', label:'本机', pct:null},
+      {kind:'airpods', label:'耳机', pct:82}
+    ]
+  }
+];
+
+const STYLES = [
+  ['plate','实底卡 Plate','采样壁纸压成玻璃，四角准星 + 带描边瓷砖——和系统卡、活动监视器同一套。'],
+  ['feather','羽化 Feather','不采样壁纸，外圈羽化暗角；瓷砖退成薄雾。'],
+  ['bare','无底 Bare','没有底板和描边，只剩瓷砖薄雾、环和数字。'],
+  ['hud','无边玻璃 HUD','不画边框：分段刻度环 + 雷达扫描 + 扫描线 + 呼吸 LED，背后透出实时壁纸。']
+];
+
+function pad2(n){ return String(n).padStart(2, '0'); }
+
+function tierColor(item){
+  if (!item || item.pct == null) return 'rgba(226,246,255,.34)';
+  if (item.charging) return 'var(--batt)';
+  if (item.pct < 10) return 'var(--red)';
+  if (item.pct < 20) return 'var(--amber)';
+  return 'var(--batt)';
+}
+
+/* HUD 档专用：32 格分段刻度环 + 细基线 + 弧端光点，不用实心弧 */
+function hudRingSVG(item, tier){
+  const n = 32;
+  const pct = item && item.pct != null ? Math.max(0, Math.min(100, item.pct)) : null;
+  const lit = pct == null ? 0 : Math.round(pct / 100 * n);
+  let ticks = '';
+  for (let i = 0; i < n; i++) {
+    const a = (-90 + i * 360 / n) * Math.PI / 180;
+    const x1 = 32 + Math.cos(a) * 25.2, y1 = 32 + Math.sin(a) * 25.2;
+    const x2 = 32 + Math.cos(a) * 30.2, y2 = 32 + Math.sin(a) * 30.2;
+    const on = i < lit;
+    ticks += '<line class="tick' + (on ? ' lit' : '') +
+      '" style="--d:' + (i * 10) + 'ms"' +
+      ' x1="' + x1.toFixed(2) + '" y1="' + y1.toFixed(2) +
+      '" x2="' + x2.toFixed(2) + '" y2="' + y2.toFixed(2) +
+      '" stroke="' + (on ? tier : 'rgba(112,216,255,.15)') + '"/>';
+  }
+  let lead = '';
+  if (pct != null && pct > 0) {
+    const a = (-90 + pct * 3.6) * Math.PI / 180;
+    const lx = 32 + Math.cos(a) * 27.7, ly = 32 + Math.sin(a) * 27.7;
+    const circle = '" cx="' + lx.toFixed(2) + '" cy="' + ly.toFixed(2) + '"';
+    lead = '<circle class="hud-lead-halo"' + circle + ' r="4.6" fill="none" stroke="currentColor" stroke-width=".8"/>' +
+      '<circle class="hud-lead"' + circle + ' r="2.1" fill="currentColor"/>';
+  }
+  return '<svg class="ring hud-ring" viewBox="0 0 64 64" style="color:' + tier + '" aria-hidden="true">' +
+    '<circle class="hud-base" cx="32" cy="32" r="31"/>' +
+    '<g class="hud-ticks">' + ticks + '</g>' + lead + '</svg>';
+}
+
+function ringSVG(item, tier, style){
+  if (style === 'hud' && item) return hudRingSVG(item, tier);
+  let arc = '';
+  if (item && item.pct != null) {
+    const p = Math.max(0, Math.min(100, item.pct));
+    const len = C * p / 100;
+    arc = '<circle class="arc" cx="32" cy="32" r="29.5" stroke="' + tier +
+      '" stroke-dasharray="' + len.toFixed(2) + ' ' + (C - len).toFixed(2) +
+      '" transform="rotate(-90 32 32)"/>';
+  }
+  return '<svg class="ring" viewBox="0 0 64 64" aria-hidden="true">' +
+    '<circle class="track" cx="32" cy="32" r="29.5"/>' + arc + '</svg>';
+}
+
+function slotHTML(item, hot, style, index){
+  const hud = style === 'hud';
+  const num = pad2(index + 1);
+  if (!item) {
+    return '<div class="slot-tile empty' + (hot ? ' hot' : '') + '">' +
+      '<div class="tile-head"><span class="dev-label">' + (hud ? num + ' 空槽' : '空槽') + '</span><span class="led"></span></div>' +
+      '<div class="ring-wrap">' + ringSVG(null, '', style) + '</div>' +
+      '<span class="pct">—</span></div>';
+  }
+  const tier = tierColor(item);
+  let cls = '';
+  if (item.pct == null) cls += ' unknown';
+  else if (!item.charging && item.pct < 10) cls += ' crit';
+  else if (!item.charging && item.pct < 20) cls += ' low';
+  if (item.charging) cls += ' charging';
+  const icon = ICONS[item.kind] || ICONS.generic;
+  const bolt = item.charging ? '<span class="bolt">' + BOLT + '</span>' : '';
+  const pct = item.pct == null ? '—' : item.pct + '%';
+  const label = hud ? num + ' ' + item.label : item.label;
+  return '<div class="slot-tile' + cls + (hot ? ' hot' : '') + '" style="--tier:' + tier + '">' +
+    '<div class="tile-head"><span class="dev-label">' + label + '</span><span class="led"></span></div>' +
+    '<div class="ring-wrap"><span class="hud-radar"></span>' + ringSVG(item, tier, style) +
+    '<span class="hud-sweep"></span>' +
+    '<span class="ring-icon"><svg viewBox="0 0 24 24" aria-hidden="true">' + icon + '</svg></span>' +
+    bolt + '</div>' +
+    '<span class="pct">' + pct + '</span>' +
+    (hud ? '<span class="hud-scan"></span>' : '') +
+    '</div>';
+}
+
+function batteryHTML(items, style, opts){
+  opts = opts || {};
+  const slots = [];
+  for (let i = 0; i < 4; i++) slots.push(slotHTML(items[i] || null, opts.hot === i, style, i));
+  return '<div class="battery style-' + style + '">' +
+    '<div class="reticle"><i></i><i></i><i></i><i></i></div>' +
+    '<div class="slots">' + slots.join('') + '</div>' +
+    '</div>';
+}
+
+/* ---------- Hero 交互 ---------- */
+let heroState = 'single';
+let heroStyle = 'hud';
+
+function findState(id){ return STATES.find(function(s){ return s.id === id; }) || STATES[0]; }
+
+function renderHero(){
+  const st = findState(heroState);
+  const html = batteryHTML(st.items, heroStyle);
+  document.getElementById('hero-widget').innerHTML = html;
+  document.getElementById('hero-zoom').innerHTML = html;
+}
+
+function buildControls(){
+  const stateBox = document.getElementById('state-btns');
+  STATES.forEach(function(st){
+    const b = document.createElement('button');
+    b.className = 'ctl' + (st.id === heroState ? ' on' : '');
+    b.textContent = st.label;
+    b.dataset.state = st.id;
+    b.addEventListener('click', function(){
+      heroState = st.id;
+      stateBox.querySelectorAll('.ctl').forEach(function(x){ x.classList.toggle('on', x.dataset.state === heroState); });
+      renderHero();
+    });
+    stateBox.appendChild(b);
+  });
+
+  const styleBox = document.getElementById('style-btns');
+  const short = {plate:'Plate', feather:'Feather', bare:'Bare', hud:'HUD'};
+  STYLES.forEach(function(row){
+    const b = document.createElement('button');
+    b.className = 'ctl' + (row[0] === heroStyle ? ' on' : '');
+    b.textContent = short[row[0]];
+    b.dataset.style = row[0];
+    b.addEventListener('click', function(){
+      heroStyle = row[0];
+      styleBox.querySelectorAll('.ctl').forEach(function(x){ x.classList.toggle('on', x.dataset.style === heroStyle); });
+      renderHero();
+    });
+    styleBox.appendChild(b);
+  });
+}
+
+/* ---------- 静态区 ---------- */
+function buildStyleGrid(){
+  document.getElementById('style-grid').innerHTML = STYLES.map(function(row){
+    return '<div class="panel style-card">' +
+      '<div class="style-stage">' + batteryHTML(findState('single').items, row[0]) + '</div>' +
+      '<h3>' + row[1] + '</h3><p>' + row[2] + '</p></div>';
+  }).join('');
+}
+
+function buildStateGrid(){
+  document.getElementById('state-grid').innerHTML = STATES.map(function(st){
+    return '<div class="panel state-card">' +
+      '<div class="state-stage">' + batteryHTML(st.items, 'hud') + '</div>' +
+      '<h3>' + st.title + '</h3><p>' + st.desc + '</p></div>';
+  }).join('');
+}
+
+function buildHoverDemos(){
+  document.getElementById('hover-mac-widget').innerHTML =
+    batteryHTML(findState('single').items, 'hud', {hot:0});
+  document.getElementById('hover-airpods-widget').innerHTML =
+    batteryHTML(findState('four').items, 'hud', {hot:1});
+}
+
+function buildMotionControls(){
+  const box = document.getElementById('motion-btns');
+  const opts = [['on','ON'],['off','OFF']];
+  let motion = 'on';
+  opts.forEach(function(o){
+    const b = document.createElement('button');
+    b.className = 'ctl' + (o[0] === motion ? ' on' : '');
+    b.textContent = o[1];
+    b.dataset.motion = o[0];
+    b.addEventListener('click', function(){
+      motion = o[0];
+      document.body.classList.toggle('no-motion', motion === 'off');
+      box.querySelectorAll('.ctl').forEach(function(x){ x.classList.toggle('on', x.dataset.motion === motion); });
+    });
+    box.appendChild(b);
+  });
+}
+
+buildControls();
+buildMotionControls();
+renderHero();
+buildStyleGrid();
+buildStateGrid();
+buildHoverDemos();
+document.getElementById('hud-hero').innerHTML = batteryHTML(findState('four').items, 'hud');
+</script>
+</body>
+</html>

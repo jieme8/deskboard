@@ -53,16 +53,11 @@ static NSColor *VC(int r, int g, int b, double a) {
 static BOOL gNeedTextShadow = NO;
 static DeskStyle gStyle = DeskStylePlate;
 
-// Bare 和 HUD 两档底板几乎一样，真正拉开距离的是配色：
-// Bare 是白字黑影的中性浮字，HUD 是青色描边 + 青色字的仪表感。
-// 和 gNeedTextShadow 一样做成全局状态，省得十几处调用点各写一遍外观判断。
-static NSColor *Pri(void) {
-    return gStyle == DeskStyleHUD ? [VaultCyanBright() colorWithAlphaComponent:0.96] : VaultPaper();
-}
-
-static NSColor *Mut(void) {
-    return gStyle == DeskStyleHUD ? [VaultCyan() colorWithAlphaComponent:0.88] : VaultMuted();
-}
+// Bare 和 HUD 两档都没有实底，靠文字自带的投影撑可读性。
+// HUD 现在是"无边玻璃"：玻璃本身没有颜色，文字也就跟 Bare 一样走中性白，
+// 只有数据刻度（环、条、图标）保留雷达青。
+static NSColor *Pri(void) { return VaultPaper(); }
+static NSColor *Mut(void) { return VaultMuted(); }
 
 static NSDictionary *Attrs(NSFont *f, NSColor *c) {
     if (!gNeedTextShadow) return @{NSFontAttributeName: f, NSForegroundColorAttributeName: c};
@@ -98,6 +93,39 @@ static CGFloat VaultBaselineForCenter(NSFont *font, CGFloat centerY) {
 }
 
 static NSString *const kDockLabels[kDockCount] = { @"扫桌面", @"开库", @"全退", @"收起" };
+
+@implementation DeskVaultPreviewView
+
+// 换内容必须自己标脏。预览窗只在图片尺寸变化时才 setFrame: 重绘，
+// 同尺寸的图（库里三张 1440×2560）算出的窗口矩形完全相同，不标脏就永远停在第一张。
+- (void)setImage:(NSImage *)image {
+    _image = image;
+    [self setNeedsDisplay:YES];
+}
+
+- (void)setTint:(NSColor *)tint {
+    _tint = tint;
+    [self setNeedsDisplay:YES];
+}
+
+- (void)drawRect:(NSRect)r {
+    [[NSColor colorWithSRGBRed:8.0/255.0 green:26.0/255.0 blue:46.0/255.0 alpha:1] setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:r xRadius:8.0 yRadius:8.0] fill];
+    if (self.image) {
+        const CGFloat pad = 6.0;
+        NSSize ts = self.image.size;
+        CGFloat aw = NSWidth(r) - pad * 2, ah = NSHeight(r) - pad * 2;
+        CGFloat s = MIN(aw / ts.width, ah / ts.height);     // 整幅 contain
+        CGFloat w = ts.width * s, h = ts.height * s;
+        [self.image drawInRect:NSMakeRect(NSMidX(r) - w / 2.0, NSMidY(r) - h / 2.0, w, h)
+                       fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0];
+    }
+    [[self.tint colorWithAlphaComponent:0.45] setStroke];
+    NSBezierPath *edge = [NSBezierPath bezierPathWithRoundedRect:r xRadius:8.0 yRadius:8.0];
+    edge.lineWidth = 1.0;
+    [edge stroke];
+}
+@end
 
 @interface DeskVaultView () <NSDraggingSource>
 @end
@@ -626,10 +654,12 @@ static BOOL VaultEaseDone(double x, double target, double eps) {
     }
     [NSGraphicsContext restoreGraphicsState];
 
-    [[VaultCyan() colorWithAlphaComponent:0.34] setStroke];
-    clip.lineWidth = 1.0;
-    [clip stroke];
-    VaultDrawReticle(b, 6.0, 13.0, VaultCyan(), 0.45, 1.2);
+    if (self.style != DeskStyleHUD) {
+        [[VaultCyan() colorWithAlphaComponent:0.34] setStroke];
+        clip.lineWidth = 1.0;
+        [clip stroke];
+        VaultDrawReticle(b, 6.0, 13.0, VaultCyan(), 0.45, 1.2);
+    }
 }
 
 // 卡片本身在屏幕上的位置。变形时窗口比卡片大，要从窗口推回卡片那块，
@@ -667,17 +697,11 @@ static BOOL VaultEaseDone(double x, double target, double eps) {
         case DeskStyleFeather:
             VaultDrawPlateFeather(b);
             break;
-        case DeskStyleHUD: {
-            // 青色 HUD：几乎不碰壁纸，只在边缘留一圈极淡的青，靠文字发光撑可读性
-            NSBezierPath *clip = [NSBezierPath bezierPathWithRoundedRect:b xRadius:14.0 yRadius:14.0];
-            [clip addClip];
-            [VC(4, 26, 50, 0.22) setFill];
-            [clip fill];
-            break;
-        }
+        case DeskStyleHUD:
         case DeskStyleBare:
         default:
-            break;   // 完全无底：整块透出壁纸，文字带柔和投影
+            // 无边玻璃按用户要求不再垫玻璃底：背后完全透出壁纸，只留文字和文字投影
+            break;
     }
 }
 
@@ -736,7 +760,10 @@ static BOOL VaultEaseDone(double x, double target, double eps) {
     [label drawAtPoint:NSMakePoint(round(rightX - [label sizeWithAttributes:la].width), kPadTop + 19.0)
         withAttributes:la];
 
-    [[VaultCyan() colorWithAlphaComponent:0.16] setStroke];
+    NSColor *sepColor = (self.style == DeskStyleHUD)
+        ? [NSColor colorWithWhite:1.0 alpha:0.10]
+        : [VaultCyan() colorWithAlphaComponent:0.16];
+    [sepColor setStroke];
     NSBezierPath *sep = [NSBezierPath bezierPath];
     sep.lineWidth = 1.0;
     [sep moveToPoint:NSMakePoint(kPadX, kGridTop - 7.0)];
@@ -922,20 +949,32 @@ static BOOL VaultEaseDone(double x, double target, double eps) {
     if (hov > 0.001) [self drawEjectButtonIn:[self ejectRectIn:r] alpha:hov];
     [NSGraphicsContext restoreGraphicsState];
 
-    // 描边画在 clip 外面，入库动画里的扫描线也不会糊掉边框
-    NSBezierPath *edge = [NSBezierPath bezierPathWithRoundedRect:r xRadius:8.0 yRadius:8.0];
-    if (hov > 0.001 || selK > 0.001) {
-        // 悬停那部分按 hov 渐亮，非悬停但被选中的部分保持原来的 0.45
-        [[VaultCyanBright() colorWithAlphaComponent:0.45 * selK + 0.75 * hov] setStroke];
-        edge.lineWidth = 1.0 + 0.4 * hov + 0.15 * selK;
+    // 描边画在 clip 外面，入库动画里的扫描线也不会糊掉边框。
+    // 无边玻璃档：静止时没有框，只有卡顶一根发丝线；悬停/选中才浮出一圈白边。
+    if (self.style == DeskStyleHUD) {
+        if (hov > 0.001 || selK > 0.001) {
+            NSBezierPath *edge = [NSBezierPath bezierPathWithRoundedRect:r xRadius:8.0 yRadius:8.0];
+            [[NSColor colorWithWhite:1.0 alpha:(0.30 * selK + 0.55 * hov) * MAX(a, 0.2)] setStroke];
+            edge.lineWidth = 1.0 + 0.3 * hov;
+            [edge stroke];
+        } else {
+            [[NSColor colorWithWhite:1.0 alpha:0.09 * MAX(a, 0.2)] setFill];
+            NSRectFill(NSMakeRect(NSMinX(r), NSMinY(r), kCardW, 1.0));
+        }
     } else {
-        CGFloat idle = self.style == DeskStyleHUD ? 0.50
-                    : (self.style == DeskStyleBare ? 0.30 : 0.18);
-        [[VaultCyan() colorWithAlphaComponent:idle] setStroke];
-        edge.lineWidth = 1.0;
+        NSBezierPath *edge = [NSBezierPath bezierPathWithRoundedRect:r xRadius:8.0 yRadius:8.0];
+        if (hov > 0.001 || selK > 0.001) {
+            // 悬停那部分按 hov 渐亮，非悬停但被选中的部分保持原来的 0.45
+            [[VaultCyanBright() colorWithAlphaComponent:0.45 * selK + 0.75 * hov] setStroke];
+            edge.lineWidth = 1.0 + 0.4 * hov + 0.15 * selK;
+        } else {
+            CGFloat idle = self.style == DeskStyleBare ? 0.30 : 0.18;
+            [[VaultCyan() colorWithAlphaComponent:idle] setStroke];
+            edge.lineWidth = 1.0;
+        }
+        edge.lineWidth *= MAX(a, 0.2);
+        [edge stroke];
     }
-    edge.lineWidth *= MAX(a, 0.2);
-    [edge stroke];
 
     if (a < 1.0) {   // 入库时的青色扫描线
         CGFloat sx = NSMinX(r) + kCardW * a;
@@ -1009,15 +1048,21 @@ static BOOL VaultEaseDone(double x, double target, double eps) {
 
 - (void)drawEmptyStateIn:(NSRect)grid {
     NSRect r = NSInsetRect(grid, 6.0, 2.0);
+    BOOL glass = (gStyle == DeskStyleHUD);
 
-    // 先把卡片区压成一块干净的底板，空着的时候底图透上来会显得脏
-    NSBezierPath *plate = [NSBezierPath bezierPathWithRoundedRect:r xRadius:10.0 yRadius:10.0];
-    [VC(6, 20, 40, 0.52) setFill];
-    [plate fill];
+    // 先把卡片区压成一块干净的底板，空着的时候底图透上来会显得脏。
+    // 无边玻璃档不压：玻璃本来就是整块，再垫一张深色板就把玻璃盖死了。
+    if (!glass) {
+        NSBezierPath *plate = [NSBezierPath bezierPathWithRoundedRect:r xRadius:10.0 yRadius:10.0];
+        [VC(6, 20, 40, 0.52) setFill];
+        [plate fill];
+    }
 
     // 六个空库位先摆出来：一眼就知道东西放进来之后会长什么样，
     // 比一大片"什么都没有"要耐看得多
-    [[VaultCyan() colorWithAlphaComponent:0.13] setStroke];
+    NSColor *slotLine = glass ? [NSColor colorWithWhite:1.0 alpha:0.10]
+                              : [VaultCyan() colorWithAlphaComponent:0.13];
+    [slotLine setStroke];
     CGFloat pat[2] = {4.0, 4.0};
     for (NSInteger i = 0; i < kCols * kRows; i++) {
         NSRect slot = NSInsetRect([self cardRectAtIndex:i in:[self layoutArea]], 1.5, 1.5);
@@ -1031,12 +1076,18 @@ static BOOL VaultEaseDone(double x, double target, double eps) {
     CGFloat pulse = (CGFloat)(0.5 + 0.5 * sin(CACurrentMediaTime() * 1.8));
     NSRect hint = NSMakeRect(NSMidX(r) - 150.0, NSMidY(r) - 41.0, 300.0, 82.0);
     NSBezierPath *hp = [NSBezierPath bezierPathWithRoundedRect:hint xRadius:10.0 yRadius:10.0];
-    [VC(8, 28, 52, 0.88) setFill];
-    [hp fill];
-    [[VaultCyan() colorWithAlphaComponent:0.42] setStroke];
+    if (glass) {
+        [[NSColor colorWithWhite:1.0 alpha:0.05] setFill];
+        [hp fill];
+        [[NSColor colorWithWhite:1.0 alpha:0.16] setStroke];
+    } else {
+        [VC(8, 28, 52, 0.88) setFill];
+        [hp fill];
+        [[VaultCyan() colorWithAlphaComponent:0.42] setStroke];
+    }
     hp.lineWidth = 1.1;
     [hp stroke];
-    VaultDrawReticle(hint, 5.0, 10.0, VaultCyan(), 0.5, 1.1);
+    if (!glass) VaultDrawReticle(hint, 5.0, 10.0, VaultCyan(), 0.5, 1.1);
 
     // 左侧靶心：两圈准星配一个呼吸的内环
     NSPoint c = NSMakePoint(NSMinX(hint) + 46.0, NSMidY(hint));
@@ -1064,7 +1115,10 @@ static BOOL VaultEaseDone(double x, double target, double eps) {
     NSBezierPath *border = [NSBezierPath bezierPathWithRoundedRect:r xRadius:10.0 yRadius:10.0];
     CGFloat bpat[2] = {5.0, 5.0};
     [border setLineDash:bpat count:2 phase:0];
-    [[VaultCyan() colorWithAlphaComponent:0.30 + 0.10 * sin(CACurrentMediaTime() * 1.6)] setStroke];
+    NSColor *borderColor = glass
+        ? [NSColor colorWithWhite:1.0 alpha:0.12]
+        : [VaultCyan() colorWithAlphaComponent:0.30 + 0.10 * sin(CACurrentMediaTime() * 1.6)];
+    [borderColor setStroke];
     border.lineWidth = 1.2;
     [border stroke];
 }
@@ -1115,13 +1169,16 @@ static BOOL VaultEaseDone(double x, double target, double eps) {
         // k 是悬停缓动量：底色、描边、字色、图标色都跟着它连续变化
         CGFloat k = (i == _hoverDock) ? _hoverDockK : 0.0;
         BOOL destructive = (i == 2);
-        NSColor *accent = destructive ? VaultWarn() : VaultCyan();
+        BOOL glass = (gStyle == DeskStyleHUD);
+        NSColor *accent = destructive ? VaultWarn() : (glass ? [NSColor whiteColor] : VaultCyan());
         NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:r
                                                         xRadius:r.size.height / 2.0
                                                         yRadius:r.size.height / 2.0];
-        [[accent colorWithAlphaComponent:0.09 + 0.11 * k] setFill];
+        CGFloat fillA = glass ? (0.045 + 0.07 * k) : (0.09 + 0.11 * k);
+        CGFloat strokeA = glass ? (0.14 + 0.30 * k) : (0.24 + 0.38 * k);
+        [[accent colorWithAlphaComponent:fillA] setFill];
         [p fill];
-        [[accent colorWithAlphaComponent:0.24 + 0.38 * k] setStroke];
+        [[accent colorWithAlphaComponent:strokeA] setStroke];
         p.lineWidth = 1.0;
         [p stroke];
 
@@ -1438,14 +1495,14 @@ static BOOL VaultEaseDone(double x, double target, double eps) {
         [self setNeedsDisplay:YES];
         return;
     }
-    // 空白处按下 = 拖窗口，和卡片面板一个脾气
+    // 空白处按下 = 拖窗口，和卡片面板一个脾气；全局锁定后这一下只当点空白
     [self beginWindowDrag];
 }
 
 // 记起点、算增量，全程只用屏幕坐标。这是卡片面板验证过的写法。
 - (void)beginWindowDrag {
     NSWindow *w = self.window;
-    if (!w) return;
+    if (!w || self.locked) return;
     _movingWindow = YES;
     _dragStartMouse = NSEvent.mouseLocation;
     _frameAtDragStart = w.frame;
@@ -1471,8 +1528,12 @@ static BOOL VaultEaseDone(double x, double target, double eps) {
         // 两件事撞在一起的话，用户想挪组件却把文件夹拖没了
         BOOL wantOut = NSEvent.modifierFlags & NSEventModifierFlagOption;
         if (!wantOut) {
-            [self beginWindowDrag];
             _pressCard = -1;
+            if (self.locked) {
+                if (self.onLog) self.onLog(@"卡片上拖动：布局已锁定，组件不移动");
+                return;
+            }
+            [self beginWindowDrag];
             if (self.onLog) self.onLog(@"卡片上未按 ⌥：转为移动组件");
             return;
         }

@@ -10,6 +10,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 extern const CGFloat kMonitorViewWidth;
 extern const CGFloat kMonitorViewHeight;
+// 简略模式：和系统状态卡同尺寸，2×2 四格、每榜只留第 1 名。
+extern const CGFloat kMonitorViewCompactWidth;
+extern const CGFloat kMonitorViewCompactHeight;
 extern const NSInteger kMonitorRowsPerQuadrant;
 
 typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
@@ -21,14 +24,17 @@ typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
 
 @interface DeskMonitorView : NSView
 // 系统总量（榜头读数）：CPU 是整机 0~100（榜头与每行同一把尺，都是占整机），内存是已用/物理字节。
-// 网络榜头不再吃系统 B/s —— 那是"速率"，和榜内每行的"连接数"不是同一个量，
-// 并排放着就会重演"总 CPU 比单进程还小"那个困惑。整机网速在卡片面板上有（↓41K ↑12K）。
+// 网络榜头是系统收发速率，榜内每行是每进程收发速率；连接数在悬停气泡的 pid 行。
 @property (nonatomic, assign) double totalCPU;
 @property (nonatomic, assign) double totalMemUsed;
 @property (nonatomic, assign) double totalMemPhys;
 @property (nonatomic, assign) double totalEnergy;
-@property (nonatomic, assign) NSInteger procCount;         // "你的进程 N 个"
+@property (nonatomic, assign) double totalNetRecv;   // 系统接收字节/秒，<0 未知
+@property (nonatomic, assign) double totalNetSend;   // 系统发送字节/秒，<0 未知
+@property (nonatomic, assign) BOOL drawSuppressed;    // 被应用窗口完全盖住：照收数据，但不画、不启帧表
 @property (nonatomic, assign) DeskStyle style;
+@property (nonatomic, assign, getter=isCompact) BOOL compact;   // 简略模式：272×142，每榜 1 行
+@property (nonatomic, assign) BOOL locked;           // 全局锁定：整块不吃拖动，双击/悬停照旧
 @property (nonatomic, copy) void (^onLog)(NSString *message);
 @property (nonatomic, copy) void (^onUserMove)(void);
 // 空闲时那张 60fps 的表是停着的，视图要动就自己把表叫回来（和弹药库同一套，别再犯 39% CPU 那个病）
@@ -37,6 +43,8 @@ typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
 // 关键约束：这个块只在**数据换拍**时被调用一次，绝不能在 drawRect 里现问 ——
 // 一次窗口求和要遍历 720 个桶，16 行乘上 60fps 就是白白把 CPU 送掉。
 @property (nonatomic, copy, nullable) double (^historyForPid)(pid_t pid, DeskHistMetric m, double *covered);
+// 单个进程的 12h 网络累计（网络每一行的第三列用）
+@property (nonatomic, copy, nullable) double (^historyTotalForPid)(pid_t pid, double *covered);
 //// 悬停某个进程：main.m 据此开/收卡外浮层。pid < 0 = 移开。
 // 连着那一格的 12 小时平均值和"窗口内真正记录到的秒数"一起给出去 —— 浮层要显示精确数字，
 // 而只有视图缓存着它（换拍算一次），别让 main.m 再回头问视图要格号。
@@ -51,26 +59,29 @@ typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
 // 校验/预览工具用：直接摆出悬停态
 - (void)applyPreviewHover:(NSInteger)metric row:(NSInteger)row;
 - (NSRect)rowRectAtMetric:(NSInteger)metric row:(NSInteger)row in:(NSRect)b;
-// 指标条几何：整行宽、贴在文字下面，和卡片面板 panel_view.m 的 drawBar 同一套算法。
-// 单独露出来是给 verify 用的 —— 这条几何就是"和卡片一样"的全部内容，飘回去就得被发现。
+// 简略模式的格矩形（完整模式返回该榜按旧几何算出的区域）；命中测试和验证共用
+- (NSRect)tileRectAtMetric:(NSInteger)metric in:(NSRect)b;
+// 当前画出来的条长（0~1）。简略模式是占榜头分母的份额，完整模式是相对榜内峰值。
+- (double)barFractionAtMetric:(NSInteger)metric row:(NSInteger)row;
++ (NSRect)barRectInTile:(NSRect)tile;
+// 指标条几何：贴在行底，只画“现在”这一根；12h 改成右侧文字列，不再画第二根条。
+// 单独露出来是给 verify 用的，飘回去就得被发现。
 + (NSRect)barRectInRow:(NSRect)row;
-// 现在这根条画在 12h 那根的上方 3pt 处。两个口都露出来是给 verify 用的：
-// 三样东西挤在 19pt 一行里（文字 12pt + 两根 2pt 条 + 两条缝），飘一pt 就压字。
-+ (NSRect)nowBarRectInRow:(NSRect)row;
 // 只给校验用：把「我用的就是卡片面板那一套取色」变成能断言的东西
 - (DeskPalette)paletteSnapshot;
 - (NSInteger)hitTestRowAt:(NSPoint)p in:(NSRect)b metric:(NSInteger *)metric;
 - (pid_t)pidAtMetric:(NSInteger)metric row:(NSInteger)row;
 - (BOOL)isDragging;
-// 悬停浮层要显示精确的 12h 数字和"已记录多久"，这两个口就是给它用的
+// 12h 列：CPU/内存/能耗取平均，网络取该进程的累计字节；没有记录就是 nil/“—”
 - (double)historyAverageAtMetric:(NSInteger)m row:(NSInteger)r;
-- (double)historyBarFractionAtMetric:(NSInteger)m row:(NSInteger)r;
-- (double)nowBarFractionAtMetric:(NSInteger)m row:(NSInteger)r;
-- (BOOL)showsHistoryTrackAtMetric:(NSInteger)m row:(NSInteger)r;
+- (double)historyTotalAtMetric:(NSInteger)m row:(NSInteger)r;
 - (double)historyCoveredAtMetric:(NSInteger)m row:(NSInteger)r;
+- (NSString *)historyTextAtMetric:(NSInteger)m row:(NSInteger)r;
 // 只给校验用：榜头那串读数。两条不变量（总≥任意一行、能耗榜头是比例不是自造单位绝对值）
 // 全靠它断言，不然改口径没人拦得住。
 - (NSString *)aggregateTextForMetric:(NSInteger)m;
+// 只给校验用：象限标题。窗口长度（CPU 10s）和内存进制（GiB）必须能在这条口上断言到。
+- (NSString *)metricLabelForVerify:(NSInteger)m;
 // 只给校验用：榜内某一行右端那串读数。"带不带单位、能耗是占比还是裸分"全靠这条钉住
 - (NSString *)valueTextFor:(DeskProc *)p metric:(NSInteger)m;
 // 能耗那一榜的分母（全部进程能耗分之和）。浮层和榜头、每行共用它，别各算各的。
@@ -82,7 +93,9 @@ typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
 @property (nonatomic, assign) BOOL editing;
 @property (nonatomic, copy) void (^onQuadEdit)(DeskQuadOffsets);
 @property (nonatomic, copy) void (^onGeometryChange)(void);
-+ (NSSize)windowSizeWarped:(BOOL)warped;
++ (NSSize)cardSizeCompact:(BOOL)compact;
++ (NSSize)windowSizeWarped:(BOOL)warped;   // 完整模式，旧调用口
++ (NSSize)windowSizeWarped:(BOOL)warped compact:(BOOL)compact;
 - (DeskQuad)currentQuad;
 - (BOOL)isWarped;
 - (NSRect)resetButtonRect;
@@ -113,15 +126,29 @@ typedef NS_ENUM(NSInteger, DeskMonitorMetric) {
 @property (nonatomic, assign) double mem;
 @property (nonatomic, assign) double energy;
 @property (nonatomic, assign) NSInteger sockets;
+@property (nonatomic, assign) double netInRate;   // 字节/秒；<0 未知
+@property (nonatomic, assign) double netOutRate;  // 字节/秒；<0 未知
 // 能耗占比的分母，由组件本体喂进来（同一拍算好的 _energyTotal），浮层不再自己求和
 @property (nonatomic, assign) double energyTotal;
 // 悬停那一格的 12 小时平均（同一指标）与窗口内真正记录到的秒数
 @property (nonatomic, assign) double histAvg;
 @property (nonatomic, assign) double histCovered;
 @property (nonatomic, assign) NSInteger histMetric;
+@property (nonatomic, assign) double histTotal;   // 网络 12h 累计字节；<0 = 无历史
+// 这个进程是干什么的（最多画两行）和它的出处。nil = 认不出来，气泡就不印那一行 ——
+// 宁缺毋滥：不拿「未知进程」凑数。
+@property (nonatomic, copy, nullable) NSString *intro;
+@property (nonatomic, copy, nullable) NSString *origin;
 // 气泡里那行 12h 文案（只读，用来断言单位与进制，不用开窗口）
 - (NSString *)historyText;
+- (NSString *)historyFoot;
+// 只给校验用：介绍实际会画出来的行数（0 = 没有介绍，最多 2 行）
+- (NSInteger)introLineCount;
 @end
+
+// 悬停气泡定稿尺寸。高度 = 原来 150 + 介绍两行 24 + 出处一行 11 + 间距 7。
+// 改这里时 tools/dump_window.m 的窗口排除条件、README 的「240×192」也要跟着改。
+extern const NSSize kDeskMonitorHoverSize;
 
 // 悬停浮层该摆哪：纯函数，鼠标在 mouse、浮层 size、可用区 visibleFrame。
 // 规矩三条：① 放在鼠标**左边**（不挡光标）；② 左边放不下才改放右边；

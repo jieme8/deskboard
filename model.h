@@ -13,12 +13,11 @@
 @property (nonatomic, copy) NSString *title;
 @property (nonatomic, copy) NSString *price;
 @property (nonatomic, copy) NSString *unit;
-@property (nonatomic, copy) NSString *infoLine;   // 油价区只留一行说明，紧凑
+@property (nonatomic, copy) NSString *infoLine;   // 油价说明（数据层保留，卡片已不显示）
 @property (nonatomic, copy) NSString *trendText;  // 涨跌标记，例：▲0.32；接口没给涨跌数据时为空
 @property (nonatomic, assign) BOOL trendUp;       // 涨红跌绿，决定 trendText 用哪个颜色
 @property (nonatomic, copy) NSString *footer;
 @property (nonatomic, copy) NSString *loadError;   // nil 表示数据可用
-@property (nonatomic, copy) NSString *statsHeader;
 @property (nonatomic, copy) NSArray<DeskStatRow *> *statRows;
 @property (nonatomic, strong) DeskStats *stats;
 + (instancetype)modelFromDictionary:(NSDictionary *)dict;
@@ -26,4 +25,8 @@
 + (instancetype)placeholderModel;
 - (void)updateStats:(DeskStats *)stats;
 + (NSArray<DeskStatRow *> *)statRowsForStats:(DeskStats *)stats;
+// 卡片表尾三个读数。格式化只此一份：视图负责摆位，校验直接断言这里。
++ (NSString *)batteryStatusTextForStats:(DeskStats *)stats;
++ (NSString *)swapTextForStats:(DeskStats *)stats;
++ (NSString *)loadTextForStats:(DeskStats *)stats;
 @end

@@ -20,14 +20,19 @@ extern NSColor *VaultWarn(void);
 // sweep 取 0~1，是扫描带在 rect 里的相对位置；传负数表示这条不画。
 void VaultDrawPlatePlate(NSRect rect, NSImage *_Nullable wallpaper, double sweep, double hot);
 void VaultDrawPlateFeather(NSRect rect);
-// Bare 什么都不画，由视图直接跳过
+// 无边玻璃 / Bare 都不画底板，由视图直接跳过（无边玻璃只保留文字和文字投影）
 
 // 卡片玻璃底在四档下的不透明度：实底卡压得实，无底那两档几乎全透
 double VaultCardFillAlpha(DeskStyle style, double hoverK, double selK);
+// 小卡墨底：签到槽、活动监视器四榜/简略格、系统状态卡共用这一份填充 + 青描边，
+// 免得三处各写一组 alpha，白壁纸上又出现"这块看得清那块看不清"
+void VaultDrawInkPlate(NSRect rect, CGFloat radius, CGFloat inkAlpha, CGFloat edgeAlpha);
 
 // 四角准星括号，一眼就能看出这是个"瞄准框里的界面"
 void VaultDrawReticle(NSRect rect, CGFloat inset, CGFloat len, NSColor *color,
                       CGFloat alpha, CGFloat lineWidth);
+// 抬头左侧那枚芯片：外壳 + 引脚 + 发光核心；卡片面板 / 活动监视器和弹药库共用
+void VaultDrawChip(NSRect rect);
 // 20×17 的文件夹：带背板和内容线，像一张立在架子上的卡片
 void VaultDrawFolderGlyph(NSRect rect, NSColor *tint, double seed);
 // 按分类画库位图形：七种格式各画各的剪影，不画统一外框，

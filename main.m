@@ -15,6 +15,12 @@
 #import "vault_art.h"
 #import "procs.h"
 #import "monitor_view.h"
+#import "credits.h"
+#import "credits_record.h"
+#import "credits_view.h"
+#import "trae_credits.h"
+#import "qoder_credits.h"
+#import "workbuddy_credits.h"
 #import "backdrop.h"
 #import <libproc.h>
 #import <sys/proc_info.h>
@@ -96,32 +102,6 @@ static NSImage *DeskStatusGlyph(void) {
     return img;
 }
 
-// 预览浮窗的内容视图：普通 NSView（不翻转），NSImage 直接 drawInRect: 就是正的
-@interface DeskVaultPreviewView : NSView
-@property (nonatomic, strong) NSImage *image;
-@property (nonatomic, strong) NSColor *tint;
-@end
-
-@implementation DeskVaultPreviewView
-- (void)drawRect:(NSRect)r {
-    [[NSColor colorWithSRGBRed:8.0/255.0 green:26.0/255.0 blue:46.0/255.0 alpha:1] setFill];
-    [[NSBezierPath bezierPathWithRoundedRect:r xRadius:8.0 yRadius:8.0] fill];
-    if (self.image) {
-        const CGFloat pad = 6.0;
-        NSSize ts = self.image.size;
-        CGFloat aw = NSWidth(r) - pad * 2, ah = NSHeight(r) - pad * 2;
-        CGFloat s = MIN(aw / ts.width, ah / ts.height);     // 整幅 contain
-        CGFloat w = ts.width * s, h = ts.height * s;
-        [self.image drawInRect:NSMakeRect(NSMidX(r) - w / 2.0, NSMidY(r) - h / 2.0, w, h)
-                       fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0];
-    }
-    [[self.tint colorWithAlphaComponent:0.45] setStroke];
-    NSBezierPath *edge = [NSBezierPath bezierPathWithRoundedRect:r xRadius:8.0 yRadius:8.0];
-    edge.lineWidth = 1.0;
-    [edge stroke];
-}
-@end
-
 @interface DeskBoardApp : NSObject <NSApplicationDelegate, NSWindowDelegate>
 @end
 
@@ -158,6 +138,7 @@ static const CGFloat kVaultCoverShare = 0.25;
     NSMenu *_styleMenu;
     NSMenuItem *_cardItem;       // 菜单里「卡片面板 › 显示/隐藏」，对勾跟着 _hidden 走
     NSMenuItem *_editItem;       // 「卡片面板 › 调角模式」
+    NSMenuItem *_lockItem;       // 「全局 › 锁定位置」：四块一起锁，对勾跟着 _layoutLocked 走
     NSMenuItem *_vaultItem;
     NSMenuItem *_vaultEditItem;  // 「弹药库 › 调角模式」
     NSMutableArray<NSWindow *> *_windows;
@@ -174,6 +155,7 @@ static const CGFloat kVaultCoverShare = 0.25;
 
     BOOL _hidden;
     BOOL _editing;              // 卡片自己的调角模式，和弹药库各切各的
+    BOOL _layoutLocked;         // 全局锁定：四块组件都不能拖，锁定那一刻的摆位即默认位置
     DeskQuadOffsets _quad;      // 四角位移，全 0 就是没变形
     BOOL _applying;             // 我们自己 setFrame 时别再回读位置，免得和拖拽互相触发
     int _lockFD;
@@ -193,6 +175,7 @@ static const CGFloat kVaultCoverShare = 0.25;
     BOOL _vaultEditing;           // 弹药库自己的调角模式，和卡片各切各的
     double _vaultAlpha;           // 整块组件的不透明度，1.0 = 原样，菜单分档
     NSTimer *_vaultCoverTimer;    // 被盖住检测：窗口层级不是事件，只能定时问 WindowServer
+    NSTimer *_cardRaiseTimer;     // 卡片定时顶回本层最前（访达桌面窗会排到它前面吃掉点击）
     NSInteger _vaultCovered;      // 连续几次检出被盖住（防一掠而过导致闪一下）
     NSInteger _vaultClear;        // 连续几次检出空出来了
     BOOL _vaultCoverHidden;       // 因被盖住而临时收起，和用户手动隐藏分开记
@@ -211,36 +194,79 @@ static const CGFloat kVaultCoverShare = 0.25;
     DeskHistory *_hist;             // 12 小时历史桶（自己攒，系统没有这个口径）
     NSTimeInterval _histLastAt;     // 上一拍的真实时刻，dt 由它算
     BOOL _monitorHidden;
+    BOOL _monitorCompact;           // 简略模式：272×142，每榜只留第 1 名
     NSInteger _monitorStyle;
     NSMenu *_monitorStyleMenu;
     NSMenu *_monitorCornerMenu;
     NSString *_screenSig;         // 上一次见过的屏幕配置指纹（屏数 + 每屏 displayID/点尺寸/原点）
     NSMenuItem *_monitorItem;
+    NSMenuItem *_monitorCompactItem;
     DeskQuadOffsets _monitorQuad;   // 活动监视器自己的四角位移，三块组件各调各的
     BOOL _monitorEditing;
     NSMenuItem *_monitorEditItem;
     NSWindow *_monitorHoverWindow;   // 悬停详情浮层：象限放不下全名，只能挪到组件外
-    NSTimer *_monitorSampleTimer;   // 2 秒一拍采进程，和动画表分开：没在动也不该停采
+    NSTimer *_monitorSampleTimer;   // 10 秒一拍采进程，和动画表分开：没在动也不该停采
     NSInteger _monitorCount;
+    NSTimeInterval _lastStatsAt;    // 上一次系统指标采样的真实时刻；文件轮询比它快，读数不能跟着抖
 
+    // 签到：第四块组件。MiniMax 走独立 OAuth，凭据只存在自己的目录里，
+    // 绝不读写 MiniMax Code 桌面客户端的 ~/.minimax。
+    NSMutableArray<NSWindow *> *_creditsWindows;
+    DeskPlaceStore *_creditsPlaces;
+    DeskCreditsProvider *_credits;
+    DeskTraeCredits *_trae;
+    DeskQoderCredits *_qoder;
+    DeskWorkbuddyCredits *_workbuddy;
+    DeskCreditsCenterSnapshot *_creditsCenter;
+    DeskCreditsRecordStore *_creditsRecords;
+    BOOL _qoderClaimSeen;
+    BOOL _creditsHidden;
+    NSInteger _creditsStyle;
+    NSMenu *_creditsStyleMenu;
+    NSMenuItem *_creditsItem;
+    NSMenuItem *_creditsCenterMenuItem;
+    NSMenuItem *_creditsMiniMaxMenuItem;
+    NSMenuItem *_creditsTraeMenuItem;
+    NSMenuItem *_creditsTraeInfoItem;
+    NSMenuItem *_creditsTraeCheckInItem;
+    NSMenuItem *_creditsWorkBuddyMenuItem;
+    NSMenuItem *_creditsQoderMenuItem;
+    NSMenuItem *_creditsQoderInfoItem;
+    NSMenuItem *_creditsQoderCheckInItem;
+    NSMenuItem *_creditsQoderTokenItem;
+    NSMenuItem *_creditsWorkBuddyInfoItem;
+    NSMenuItem *_creditsWorkBuddyCheckInItem;
+    NSMenuItem *_creditsWorkBuddyLoginItem;
+    NSMenuItem *_creditsMiniMaxInfoItem;
+    NSMenuItem *_creditsStatusMenuItem;
+    NSMenuItem *_creditsCheckInItem;
+    NSMenuItem *_creditsAuthItem;
+    NSTimer *_creditsTimer;
+    NSInteger _lastCreditsHourlyHour;
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    // 数据层自己的日志并进同一条 App 日志：库目录/清单出事时要能在交接日志里看到
+    [DeskVault shared].logHandler = ^(NSString *m) { DeskLog(@"弹药库 %@", m); };
     [self migrateLegacyDefaults];
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
-    _places = [[DeskPlaceStore alloc] initWithDictionary:[ud dictionaryForKey:K(@"Places")]];
+    _places = [[DeskPlaceStore alloc] initWithDictionary:[ud dictionaryForKey:K(@"Places")]
+                                             defaultPlace:DeskPlaceDefaultForKind(DeskPlaceKindPanel)];
     if (_places.count == 0) {
         // 一次性迁移：老的全局位置种进主屏那条记录，之后老键废弃
         NSNumber *cornerVal = [ud objectForKey:K(@"Corner")];
         NSNumber *dxVal = [ud objectForKey:K(@"DX")];
         NSNumber *dyVal = [ud objectForKey:K(@"DY")];
         if (cornerVal) {
-            DeskPlace seed = [DeskPlaceStore defaultPlace];
+            DeskPlace seed = DeskPlaceDefaultForKind(DeskPlaceKindPanel);
             seed.corner = cornerVal.integerValue;
             if (dxVal) seed.dx = MAX(0, dxVal.doubleValue);
             if (dyVal) seed.dy = MAX(0, dyVal.doubleValue);
             [_places setPlace:seed forKey:[_places keyForScreen:[NSScreen mainScreen]]];
+        } else {
+            [_places setPlace:DeskPlaceDefaultForKind(DeskPlaceKindPanel)
+                       forKey:[_places keyForScreen:[NSScreen mainScreen]]];
         }
         [ud removeObjectForKey:K(@"Corner")];
         [ud removeObjectForKey:K(@"DX")];
@@ -248,6 +274,7 @@ static const CGFloat kVaultCoverShare = 0.25;
         [self saveConfig];
     }
     _hidden = [ud boolForKey:K(@"Hidden")];
+    _layoutLocked = [ud boolForKey:K(@"LayoutLocked")];
     _vaultHidden = [ud boolForKey:K(@"VaultHidden")];
     _monitorHidden = [ud boolForKey:K(@"MonitorHidden")];
     // 层级现在是硬约束：弹药库只贴桌面图标层，任何应用窗口（全屏的也一样）都在它之下。
@@ -269,6 +296,7 @@ static const CGFloat kVaultCoverShare = 0.25;
     _vaultStyle = vsVal ? MIN(vsVal.integerValue, (NSInteger)DeskStyleHUD) : (NSInteger)DeskStylePlate;
     NSNumber *msVal = [ud objectForKey:K(@"MonitorStyle")];
     _monitorStyle = msVal ? MIN(msVal.integerValue, (NSInteger)DeskStyleHUD) : (NSInteger)DeskStylePlate;
+    _monitorCompact = [ud boolForKey:K(@"MonitorCompact")];
     _monitorQuad = DeskQuadOffsetsFromString([ud stringForKey:K(@"MonitorQuad")]);
     NSNumber *styleVal = [ud objectForKey:K(@"Style")];
     // 旧的"透视站立"已经并到调角里，存过的值越界就退到 HUD
@@ -283,19 +311,17 @@ static const CGFloat kVaultCoverShare = 0.25;
     _sys = [DeskSysMonitor new];
     [_sys sample];   // 先取一次基线，下一拍才有差值型指标
     // 弹药库的位置另存一份：和卡片各摆各的，共用一个存档会互相顶掉
-    _vaultPlaces = [[DeskPlaceStore alloc] initWithDictionary:[ud dictionaryForKey:K(@"VaultPlaces")]];
+    _vaultPlaces = [[DeskPlaceStore alloc] initWithDictionary:[ud dictionaryForKey:K(@"VaultPlaces")]
+                                                 defaultPlace:DeskPlaceDefaultForKind(DeskPlaceKindVault)];
     if (_vaultPlaces.count == 0) {
-        DeskPlace seed = [DeskPlaceStore defaultPlace];
-        // 默认左下角。右下角是访达放桌面图标的地方，弹药库是块不透明的板，
-        // 压上去那些图标就没法拖了；放左边则是"图标从右边拖过来"的顺手方向
-        seed.corner = 2;
-        seed.dx = 16.0;
-        seed.dy = 16.0;
+        // 默认左下：系统状态右上 / 监视器右下 / 弹药库左下，左上留空
+        DeskPlace seed = DeskPlaceDefaultForKind(DeskPlaceKindVault);
         [_vaultPlaces setPlace:seed forKey:[_vaultPlaces keyForScreen:[NSScreen mainScreen]]];
         [self saveConfig];
     }
     // 活动监视器再单独一份存档：三块组件各摆各的，共用会互相顶掉
-    _monitorPlaces = [[DeskPlaceStore alloc] initWithDictionary:[ud dictionaryForKey:K(@"MonitorPlaces")]];
+    _monitorPlaces = [[DeskPlaceStore alloc] initWithDictionary:[ud dictionaryForKey:K(@"MonitorPlaces")]
+                                                   defaultPlace:DeskPlaceDefaultForKind(DeskPlaceKindMonitor)];
     _procs = [DeskProcsMonitor new];
     // 12 小时历史：自己攒。macOS 没有公开 API 能给"过去 12 小时"的任意指标
     // （getloadavg 只到 15 分钟，host_cpu_load_info 和网卡计数都是自开机累计）
@@ -303,27 +329,122 @@ static const CGFloat kVaultCoverShare = 0.25;
                                               stringByAppendingPathComponent:@"History-12h.plist"]];
     [_hist load];
     if (_monitorPlaces.count == 0) {
-        DeskPlace mseed = [DeskPlaceStore defaultPlace];
-        // 默认右上角：左上已经被卡片面板占了，左下是弹药库，右下是访达桌面图标的落点
-        mseed.corner = 1;
-        mseed.dx = 16.0;
-        mseed.dy = 16.0;
+        // 默认右下：和右上的系统状态同侧，左下的弹药库分居另一侧
+        DeskPlace mseed = DeskPlaceDefaultForKind(DeskPlaceKindMonitor);
         [_monitorPlaces setPlace:mseed forKey:[_monitorPlaces keyForScreen:[NSScreen mainScreen]]];
         [self saveConfig];
+    }
+    // 签到：第四块组件，位置单独一份，默认左上（另外三块占右上/右下/左下）
+    _creditsPlaces = [[DeskPlaceStore alloc] initWithDictionary:[ud dictionaryForKey:K(@"CreditsPlaces")]
+                                                   defaultPlace:DeskPlaceDefaultForKind(DeskPlaceKindCredits)];
+    if (_creditsPlaces.count == 0) {
+        DeskPlace cseed = DeskPlaceDefaultForKind(DeskPlaceKindCredits);
+        [_creditsPlaces setPlace:cseed forKey:[_creditsPlaces keyForScreen:[NSScreen mainScreen]]];
+        [self saveConfig];
+    }
+    _creditsHidden = [ud boolForKey:K(@"CreditsHidden")];
+    NSNumber *csVal = [ud objectForKey:K(@"CreditsStyle")];
+    _creditsStyle = csVal ? MIN(csVal.integerValue, (NSInteger)DeskStyleHUD)
+                          : (NSInteger)DeskStylePlate;
+    // 90 天纪录：本地日桶 + 最后一次签到事件；只有余额和日期，不含任何令牌。
+    _creditsRecords = [[DeskCreditsRecordStore alloc] initWithPath:
+        [[[self dataDir] stringByAppendingPathComponent:@"Credits"]
+         stringByAppendingPathComponent:@"records.json"]];
+    _creditsRecords.onLog = ^(NSString *m) { DeskLog(@"签到记录 %@", m); };
+    [_creditsRecords load];
+    _credits = [[DeskCreditsProvider alloc] initWithDirectory:
+                [[self dataDir] stringByAppendingPathComponent:@"Credits"]];
+    __weak typeof(self) weakCredits = self;
+    _credits.onLog = ^(NSString *m) { DeskLog(@"签到 %@", m); };
+    _credits.onChange = ^(DeskCreditsSnapshot *s) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [weakCredits applyCreditsSnapshot:s];
+        });
+    };
+    [_credits load];
+
+    // Trae：只读本机 storage.json，绝不续期（会轮换 refreshToken 踢掉 IDE）。
+    // 登录态由 IDE 自己续；我们每次同步都重读文件，IDE 换了 token 就自动跟上。
+    _trae = [DeskTraeCredits new];
+    _trae.onLog = ^(NSString *m) { DeskLog(@"签到 Trae %@", m); };
+    _trae.onChange = ^(DeskTraeSnapshot *t) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [weakCredits applyTraeSnapshot:t];
+        });
+    };
+    [_trae load];
+
+    // Qoder：PT（pt-…）兑换 job token 后直连官方活动接口；国内版不需要设备风控头。
+    // PT 只存在 DeskBoard 的 Credits 目录（0600），从不读写 Qoder 客户端凭据。
+    _qoder = [[DeskQoderCredits alloc] initWithDirectory:
+              [[self dataDir] stringByAppendingPathComponent:@"Credits"]];
+    _qoder.onLog = ^(NSString *m) { DeskLog(@"签到 Qoder %@", m); };
+    _qoder.onChange = ^(DeskQoderSnapshot *q) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [weakCredits applyQoderSnapshot:q];
+        });
+    };
+    [_qoder load];
+    _qoderClaimSeen = _qoder.snapshot.claimed;
+
+    // WorkBuddy：官方浏览器授权拿 token；5.6.2+ 客户端本机登录态已加密，只读导入仅对明文有效。
+    _workbuddy = [[DeskWorkbuddyCredits alloc] initWithDirectory:
+                  [[self dataDir] stringByAppendingPathComponent:@"Credits"]];
+    _workbuddy.onLog = ^(NSString *m) { DeskLog(@"签到 WorkBuddy %@", m); };
+    _workbuddy.onChange = ^(DeskWorkbuddySnapshot *w) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [weakCredits applyWorkbuddySnapshot:w];
+        });
+    };
+    [_workbuddy load];
+
+    _creditsCenter = [DeskCreditsCenterSnapshot centerWithMiniMax:_credits.snapshot
+                                                             trae:_trae.snapshot
+                                                            qoder:_qoder.snapshot
+                                                        workbuddy:_workbuddy.snapshot];
+    [self applyCreditsRecordsToCenter:_creditsCenter];
+    // 一次性布局迁移：老存档里三块的位置是旧的出厂锚点，用户已经明确要
+    // 系统状态右上 / 活动监视器右下 / 弹药库左下。只在版本号落后时覆盖一次，
+    // 之后用户再拖由存档接管，不会再被掰回去。
+    if ([ud integerForKey:K(@"LayoutDefaultsV")] < 2) {
+        for (NSScreen *scr in [NSScreen screens]) {
+            [_places setPlace:DeskPlaceDefaultForKind(DeskPlaceKindPanel)
+                       forKey:[_places keyForScreen:scr]];
+            [_vaultPlaces setPlace:DeskPlaceDefaultForKind(DeskPlaceKindVault)
+                            forKey:[_vaultPlaces keyForScreen:scr]];
+            [_monitorPlaces setPlace:DeskPlaceDefaultForKind(DeskPlaceKindMonitor)
+                              forKey:[_monitorPlaces keyForScreen:scr]];
+        }
+        [ud setInteger:2 forKey:K(@"LayoutDefaultsV")];
+        [self saveConfig];
+        DeskLog(@"布局默认值 v2：系统状态右上 / 活动监视器右下 / 弹药库左下");
     }
     [self buildStatusItem];
     [self rebuildWindows];
     [self rebuildVaultWindows];
     [self rebuildMonitorWindows];
+    [self rebuildCreditsWindows];
     [self startWidgetTicking];
     [self startMonitorSampling];
+    [self startCreditsTicking];
     [self startPolling];
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(screenDidChange:)
                                                  name:NSApplicationDidChangeScreenParametersNotification
                                                object:nil];
+    [[[NSWorkspace sharedWorkspace] notificationCenter] addObserver:self
+                                                          selector:@selector(systemDidWake:)
+                                                              name:NSWorkspaceDidWakeNotification
+                                                            object:nil];
     _screenSig = [self currentScreenSignature];   // 建完窗再记指纹：之后每条"抖动"通知都能认出配置没变
-    DeskLog(@"启动完成 屏位档 %lu 隐藏=%d 屏幕指纹=%@", (unsigned long)_places.count, _hidden, _screenSig);
+    DeskLog(@"启动完成 屏位档 %lu 隐藏=%d 屏幕指纹=%@ 布局锁定=%d", (unsigned long)_places.count, _hidden, _screenSig, _layoutLocked);
+    DeskLog(@"签到组件：%@，%@", _creditsHidden ? @"已隐藏" : @"已显示",
+            _credits.snapshot.authorized ? @"已授权" : @"未授权（菜单 › 签到中心 › MiniMax › 重新授权）");
+    DeskLog(@"签到中心：%ld/4 已接入 · %ld 已办 / %ld 待办 / %ld 异常",
+            (long)_creditsCenter.connectedCount, (long)_creditsCenter.doneCount,
+            (long)_creditsCenter.pendingCount, (long)_creditsCenter.errorCount);
+    DeskLog(@"弹药库根目录 %@（%lu 项）", [DeskVault shared].rootPath,
+            (unsigned long)[DeskVault shared].items.count);
 }
 
 // 一次性迁移：老 bundle id（com.hujie.deskboard）域里的配置，搬到新 id 的域。
@@ -391,6 +512,7 @@ static const CGFloat kVaultCoverShare = 0.25;
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
     [ud setObject:[_places dictionary] forKey:K(@"Places")];
     [ud setBool:_hidden forKey:K(@"Hidden")];
+    [ud setBool:_layoutLocked forKey:K(@"LayoutLocked")];
     [ud setInteger:_style forKey:K(@"Style")];
     [ud setObject:DeskQuadOffsetsString(_quad) forKey:K(@"Quad")];
     [ud setObject:[_vaultPlaces dictionary] forKey:K(@"VaultPlaces")];
@@ -400,8 +522,12 @@ static const CGFloat kVaultCoverShare = 0.25;
     [ud setInteger:_vaultStyle forKey:K(@"VaultStyle")];
     [ud setObject:[_monitorPlaces dictionary] forKey:K(@"MonitorPlaces")];
     [ud setBool:_monitorHidden forKey:K(@"MonitorHidden")];
+    [ud setBool:_monitorCompact forKey:K(@"MonitorCompact")];
     [ud setInteger:_monitorStyle forKey:K(@"MonitorStyle")];
     [ud setObject:DeskQuadOffsetsString(_monitorQuad) forKey:K(@"MonitorQuad")];
+    [ud setObject:[_creditsPlaces dictionary] forKey:K(@"CreditsPlaces")];
+    [ud setBool:_creditsHidden forKey:K(@"CreditsHidden")];
+    [ud setInteger:_creditsStyle forKey:K(@"CreditsStyle")];
 }
 
 - (BOOL)acquireSingleInstanceLock {
@@ -423,9 +549,9 @@ static const CGFloat kVaultCoverShare = 0.25;
     DeskModel *m = [DeskModel modelFromJSONFileAtPath:_mockPath];
     [m updateStats:[_sys sample]];
     DeskStats *s = m.stats;
-    DeskLog(@"数据：%@ %@ [%@] 错误=%@ | CPU=%.0f%% GPU=%.0f%% 温度=%.1f°C 内存=%.1f/%.0fG 磁盘剩=%.0fG SSD=%d 读=%.1f 写=%.1f MB/s",
+    DeskLog(@"数据：%@ %@ [%@] 错误=%@ | CPU=%.0f%%（%.0fs 窗口） GPU=%.0f%% 温度=%.1f°C 内存=%.1f/%.0fGiB 磁盘剩=%.0fG SSD=%d 读=%.1f 写=%.1f MB/s",
             m.title, m.price, m.infoLine, m.loadError ?: @"无",
-            s.cpu, s.gpu, s.cpuTemp, s.memUsed / 1e9, s.memTotal / 1e9, s.diskFree / 1e9,
+            s.cpu, s.cpuWindow, s.gpu, s.cpuTemp, s.memUsed / 1073741824.0, s.memTotal / 1073741824.0, s.diskFree / 1e9,
             s.diskIsSSD, s.diskRead / 1e6, s.diskWrite / 1e6);
     return m;
 }
@@ -440,7 +566,7 @@ static const CGFloat kVaultCoverShare = 0.25;
     CGFloat y = (p.corner >= 2) ? vf.origin.y + p.dy : NSMaxY(vf) - cardSize.height - p.dy;
     if (!NSIntersectsRect(NSMakeRect(x, y, cardSize.width, cardSize.height), vf)) {
         DeskLog(@"档 %@ 落出可视区，夹回默认锚点", [_places keyForScreen:screen]);
-        p = [DeskPlaceStore defaultPlace];
+        p = _places.fallbackPlace;
         [_places setPlace:p forKey:[_places keyForScreen:screen]];
         [self saveConfig];
     }
@@ -471,7 +597,9 @@ static const CGFloat kVaultCoverShare = 0.25;
                                                   defer:NO];
     [w setBackgroundColor:[NSColor clearColor]];
     w.opaque = NO;
-    w.hasShadow = ![self quadActive];   // 变形后外框是矩形，窗影会出卖它
+    // 变形后外框是矩形，窗影会出卖它；无边玻璃也不要窗影 ——
+    // WindowServer 会按窗口 alpha 轮廓算出一圈深边，看起来就像又描了一道边框。
+    w.hasShadow = ![self quadActive] && _style != DeskStyleHUD;
     w.level = kCGDesktopIconWindowLevel;
     w.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces
                          | NSWindowCollectionBehaviorStationary
@@ -486,6 +614,7 @@ static const CGFloat kVaultCoverShare = 0.25;
                                                       warped:[self quadActive]];
     card.quadOffsets = _quad;
     card.editing = _editing;
+    card.locked = _layoutLocked;
     __weak typeof(self) weakSelf = self;
     card.onQuadEdit = ^(DeskQuadOffsets q) {
         [weakSelf applyQuadFromCard:q];
@@ -493,8 +622,14 @@ static const CGFloat kVaultCoverShare = 0.25;
     card.onGeometryChange = ^{ [weakSelf updateHud]; };   // 拖角时窗口没动，只能靠这个刷新读数
     __weak NSWindow *weakSelfWindow = w;
     card.onUserMove = ^{ [weakSelf recordPendingPlaceInWindow:weakSelfWindow]; };
+    // 卡片到点动效（每 10 秒 0.9 秒）：只在真的播的时候把停掉的 60fps 表叫回来
+    card.onNeedFrames = ^{ [weakSelf resumeWidgetTicking]; };
     w.contentView = card;
     [card refreshSource];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(mainOcclusionChanged:)
+                                                 name:NSWindowDidChangeOcclusionStateNotification
+                                               object:w];
     [self logWindowSnapshot:w tag:@"卡片"];
     return w;
 }
@@ -524,6 +659,26 @@ static const CGFloat kVaultCoverShare = 0.25;
     [self updateHud];
 }
 
+// 同层竞争：访达的桌面图标窗和卡片同在 kCGDesktopIconWindowLevel。刷新桌面、切 Space、
+// 换壁纸都会让它排到卡片前面 —— 这一层没有「置顶」可设，只能定时顶回去。
+// 实测卡片整块被访达桌面窗 100% 压着（probe_clickcatcher 全部：卡片排第 19、访达第 18），
+// 点击根本到不了视图，表现就是别的组件都拖得动、只有卡片按住一动不动。
+// 活动的四块统一走这一拍：卡片原来完全没有顶回；监视器 30s、签到 60s 才顶一次，
+// 桌面窗抢到前面之后用户会有几十秒点不动（实测 16:36 监视器就是这个状态）。
+- (void)raiseSameLayerTimer:(NSTimer *)timer {
+    (void)timer;
+    if (!_hidden && _windows.count > 0) {
+        BOOL dragging = NO;
+        for (NSWindow *w in _windows) {
+            NSView *v = w.contentView;
+            if ([v isKindOfClass:[DeskCardView class]] && [(DeskCardView *)v isDragging]) { dragging = YES; break; }
+        }
+        if (!dragging) for (NSWindow *w in _windows) [w orderFrontRegardless];
+    }
+    [self raiseMonitorAboveSameLayer];
+    [self raiseCreditsAboveSameLayer];
+}
+
 #pragma mark - 弹药库
 
 - (BOOL)vaultQuadActive { return !DeskQuadOffsetsIsZero(_vaultQuad) || _vaultEditing; }
@@ -539,13 +694,14 @@ static const CGFloat kVaultCoverShare = 0.25;
     CGFloat padX = (win.width - card.width) / 2.0, padY = (win.height - card.height) / 2.0;
     NSRect r = NSMakeRect(round(x - padX), round(y - padY), win.width, win.height);
     if (!NSIntersectsRect(r, vf)) {
-        // 落出可视区（老记录来自大屏，切到小屏）就夹回右下角，别让组件摆到看不见的地方
+        // 落出可视区（老记录来自大屏，切到小屏）就夹回出厂锚点，别让组件摆到看不见的地方
+        p = _vaultPlaces.fallbackPlace;
         DeskLog(@"弹药库档 %@ 落出可视区，夹回默认锚点（左下）", [_vaultPlaces keyForScreen:screen]);
-        p.corner = 2; p.dx = 16.0; p.dy = 16.0;
         [_vaultPlaces setPlace:p forKey:[_vaultPlaces keyForScreen:screen]];
         [self saveConfig];
-        r = NSMakeRect(round(vf.origin.x + p.dx - padX), round(vf.origin.y + p.dy - padY),
-                       win.width, win.height);
+        CGFloat fx = (p.corner == 1 || p.corner == 3) ? NSMaxX(vf) - card.width - p.dx : vf.origin.x + p.dx;
+        CGFloat fy = (p.corner >= 2) ? vf.origin.y + p.dy : NSMaxY(vf) - card.height - p.dy;
+        r = NSMakeRect(round(fx - padX), round(fy - padY), win.width, win.height);
     }
     return r;
 }
@@ -557,7 +713,8 @@ static const CGFloat kVaultCoverShare = 0.25;
                                                 backing:NSBackingStoreBuffered defer:NO];
     [w setBackgroundColor:[NSColor clearColor]];
     w.opaque = NO;
-    w.hasShadow = YES;
+    // 无边玻璃不要窗影：窗影按窗口 alpha 轮廓计算，会在玻璃四周压出一圈深边
+    w.hasShadow = _vaultStyle != DeskStyleHUD;
     // 层级是硬约束，不是可调项：只贴桌面图标层（图标之下、壁纸之上）。
     // 用户的应用窗口（含全屏窗口）一律在这层之上，所以任何模式下都盖不到窗口上。
     w.level = kCGDesktopIconWindowLevel;
@@ -578,6 +735,7 @@ static const CGFloat kVaultCoverShare = 0.25;
     DeskVaultView *v = [[DeskVaultView alloc] initWithFrame:NSMakeRect(0, 0, NSWidth(vf), NSHeight(vf))];
     v.quadOffsets = _vaultQuad;
     v.editing = _vaultEditing;
+    v.locked = _layoutLocked;
     v.style = (DeskStyle)_vaultStyle;
     __weak typeof(self) weakSelf = self;
     __weak NSWindow *weakW = w;
@@ -663,6 +821,17 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     CFRelease(list);
     if (dominant) *dominant = hit >= total * kVaultCoverShare ? topWho : nil;
     return hit >= total * kVaultCoverShare;
+}
+
+// 桌面层组件的窗口矩形（WindowServer 左上原点）是否被用户的应用窗口完全盖住。
+// 盖住时它的重画和缓动谁都看不见，5 秒一拍还照画就是把电烧在空气里。
+// 复用弹药库那套已经量过的判定：层级 0~19、非全透明、排除 Finder/Dock。
+static BOOL WidgetWindowCovered(NSWindow *w) {
+    if (!w || !w.isVisible) return YES;
+    CGFloat mainH = [NSScreen mainScreen].frame.size.height;
+    NSRect f = w.frame;
+    return VaultCoveredByAppWindow(NSMakeRect(f.origin.x, mainH - NSMaxY(f),
+                                              NSWidth(f), NSHeight(f)), NULL);
 }
 
 // 窗口层级不是事件，只能定时去问一次 WindowServer
@@ -795,17 +964,7 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
         f = NSInsetRect(f, (NSWidth(f) - kVaultViewWidth) / 2.0,
                         (NSHeight(f) - kVaultViewHeight) / 2.0);
     }
-    DeskPlace p;
-    p.corner = (NSMidY(f) > vf.origin.y + vf.size.height / 2.0 ? 0 : 2)
-             + (NSMidX(f) > vf.origin.x + vf.size.width / 2.0 ? 1 : 0);
-    p.dx = MAX(0, (p.corner == 1 || p.corner == 3) ? NSMaxX(vf) - NSMaxX(f) : f.origin.x - vf.origin.x);
-    p.dy = MAX(0, (p.corner >= 2) ? f.origin.y - vf.origin.y : NSMaxY(vf) - NSMaxY(f));
-    // 夹回可视区：整块拖出去就等于没了，存这种档位等于把组件弄丢
-    const CGFloat margin = 16.0;
-    CGFloat maxDx = MAX(margin, vf.size.width - kVaultViewWidth - margin);
-    CGFloat maxDy = MAX(margin, vf.size.height - kVaultViewHeight - margin);
-    p.dx = MIN(MAX(p.dx, margin), maxDx);
-    p.dy = MIN(MAX(p.dy, margin), maxDy);
+    DeskPlace p = DeskPlaceFromFrame(f, NSMakeSize(kVaultViewWidth, kVaultViewHeight), vf);
     if (NSIntersectsRect(f, vf)) {
         NSString *key = [_vaultPlaces keyForScreen:screen];
         [_vaultPlaces setPlace:p forKey:key];
@@ -834,23 +993,23 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
 - (NSRect)monitorFrameForScreen:(NSScreen *)screen {
     NSRect vf = screen.visibleFrame;
     DeskPlace p = [_monitorPlaces effectivePlaceForScreen:screen];
-    CGFloat x = (p.corner == 1 || p.corner == 3) ? NSMaxX(vf) - kMonitorViewWidth - p.dx
+    NSSize card = [DeskMonitorView cardSizeCompact:_monitorCompact];
+    CGFloat x = (p.corner == 1 || p.corner == 3) ? NSMaxX(vf) - card.width - p.dx
                                                  : vf.origin.x + p.dx;
-    CGFloat y = (p.corner >= 2) ? vf.origin.y + p.dy : NSMaxY(vf) - kMonitorViewHeight - p.dy;
+    CGFloat y = (p.corner >= 2) ? vf.origin.y + p.dy : NSMaxY(vf) - card.height - p.dy;
     // 存档里的 dx/dy 描述的是**看得见的卡片**，窗口在变形时外扩一圈余量，
     // 所以先按卡片算，再按 pad 把窗口矩形撑回去
-    NSSize card = NSMakeSize(kMonitorViewWidth, kMonitorViewHeight);
-    NSSize win = [DeskMonitorView windowSizeWarped:[self monitorQuadActive]];
+    NSSize win = [DeskMonitorView windowSizeWarped:[self monitorQuadActive] compact:_monitorCompact];
     CGFloat padX = (win.width - card.width) / 2.0, padY = (win.height - card.height) / 2.0;
     NSRect r = NSMakeRect(round(x - padX), round(y - padY), win.width, win.height);
     if (!NSIntersectsRect(r, vf)) {
-        DeskLog(@"活动监视器档 %@ 落出可视区，夹回默认锚点（右上）", [_monitorPlaces keyForScreen:screen]);
-        p.corner = 1; p.dx = 16.0; p.dy = 16.0;
+        p = _monitorPlaces.fallbackPlace;
+        DeskLog(@"活动监视器档 %@ 落出可视区，夹回默认锚点（右下）", [_monitorPlaces keyForScreen:screen]);
         [_monitorPlaces setPlace:p forKey:[_monitorPlaces keyForScreen:screen]];
         [self saveConfig];
-        r = NSMakeRect(round(NSMaxX(vf) - card.width - p.dx - padX),
-                       round(NSMaxY(vf) - card.height - p.dy - padY),
-                       win.width, win.height);
+        CGFloat fx = (p.corner == 1 || p.corner == 3) ? NSMaxX(vf) - card.width - p.dx : vf.origin.x + p.dx;
+        CGFloat fy = (p.corner >= 2) ? vf.origin.y + p.dy : NSMaxY(vf) - card.height - p.dy;
+        r = NSMakeRect(round(fx - padX), round(fy - padY), win.width, win.height);
     }
     return r;
 }
@@ -880,10 +1039,11 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     w.acceptsMouseMovedEvents = YES;    // 不开这个，悬停高亮是死的
     w.title = @"DeskBoard 活动监视器";
     DeskMonitorView *v = [[DeskMonitorView alloc] initWithFrame:NSMakeRect(0, 0, NSWidth(vf), NSHeight(vf))];
+    v.compact = _monitorCompact;
     v.style = (DeskStyle)_monitorStyle;
     v.quadOffsets = _monitorQuad;
     v.editing = _monitorEditing;
-    v.procCount = _monitorCount;
+    v.locked = _layoutLocked;
     __weak typeof(self) weakSelf = self;
     __weak NSWindow *weakW = w;
     v.onUserMove = ^{ [weakSelf saveMonitorPlaceInWindow:weakW]; };
@@ -897,14 +1057,23 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
         return [_hist averageForPid:pid metric:m now:[NSDate date].timeIntervalSince1970
                          window:kDeskHistoryWindow covered:covered];
     };
+    v.historyTotalForPid = ^double(pid_t pid, double *covered) {
+        if (!_hist) { if (covered) *covered = 0; return 0; }
+        return [_hist totalForPid:pid metric:DeskHistNetwork
+                              now:[NSDate date].timeIntervalSince1970
+                           window:kDeskHistoryWindow covered:covered];
+    };
     v.onLog = ^(NSString *message) { DeskLog(@"活动监视器 %@", message); };
-    // 组件自己说"我要动了"就把动画表叫回来：空闲时那张表是停着的
-    v.onNeedFrames = ^{ [weakSelf resumeWidgetTicking]; };
+    // 条子改成直接落位后，活动监视器不再需要逐帧动画表；只有弹药库/卡片还在用 onNeedFrames
     v.onHover = ^(pid_t pid, NSRect row, NSInteger metric, double avg, double covered) {
         [weakSelf showMonitorHover:pid rowInWindow:row metric:metric
                             histAvg:avg histCovered:covered forWindow:weakW];
     };
     w.contentView = v;
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(monitorOcclusionChanged:)
+                                                 name:NSWindowDidChangeOcclusionStateNotification
+                                               object:w];
     [self logWindowSnapshot:w tag:@"监视器"];
     return w;
 }
@@ -918,7 +1087,7 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     if (!p) { [_monitorHoverWindow orderOut:nil]; return; }
     // 214 太窄：底部那行「12h 平均基于已记录的 0.7 小时 · 双击看原生活动监视器」
     // 会被裁掉尾巴（实测截图里就是断在「原生活动监」）。加宽到 240 让它整句放下。
-    NSSize size = NSMakeSize(240.0, 150.0);
+    NSSize size = kDeskMonitorHoverSize;
     if (!_monitorHoverWindow) {
         _monitorHoverWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, size.width, size.height)
                                                          styleMask:NSWindowStyleMaskBorderless
@@ -940,7 +1109,20 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     hv.uid = [self uidOfPid:p.pid];
     hv.startedAt = p.startedAt;
     hv.cpu = p.cpu; hv.mem = p.mem; hv.energy = p.energy; hv.sockets = p.sockets;
+    hv.netInRate = p.netInRate; hv.netOutRate = p.netOutRate;
+    // 介绍与出处只在换行时查一次（proc_pidpath 是一次系统调用），不跟 10 秒采样走
+    NSString *exePath = DeskProcExecutablePath(p.pid);
+    hv.intro = DeskProcIntroText(p.name, exePath);
+    hv.origin = DeskProcOriginText(exePath);
     hv.histMetric = metric; hv.histAvg = histAvg; hv.histCovered = histCovered;
+    hv.histTotal = -1;
+    if (metric == DeskMonitorMetricNetwork && _hist) {
+        double cov = 0;
+        double total = [_hist totalForPid:pid metric:DeskHistNetwork
+                                      now:[NSDate date].timeIntervalSince1970
+                                   window:kDeskHistoryWindow covered:&cov];
+        if (cov > 0 && total > 0) hv.histTotal = total;
+    }
     // 能耗那行报的是占比，分母必须跟组件那一拍算的一样，浮层自己再求一次和就是第二套真相
     NSView *cv = host.contentView;
     hv.energyTotal = [cv isKindOfClass:[DeskMonitorView class]] ? ((DeskMonitorView *)cv).energyShareTotal : 0;
@@ -987,12 +1169,13 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
 // 这就是三块组件里"只有这一块拖不动"的差别所在。
 - (void)raiseMonitorAboveSameLayer {
     if (_monitorHidden || _monitorWindows.count == 0) return;
-    if (_monitorHoverWindow.isVisible) return;   // 浮层同层：这时顶组件会把气泡压掉
     for (NSWindow *w in _monitorWindows) {
         NSView *v = w.contentView;
         if ([v isKindOfClass:[DeskMonitorView class]] && [(DeskMonitorView *)v isDragging]) return;
     }   // 正按住拖着的时候顶一层，等于从用户手里把窗口抢走
     for (NSWindow *w in _monitorWindows) [w orderFrontRegardless];
+    // 悬停气泡和组件同层：顶完组件要再把气泡顶回来，否则气泡会被组件盖住
+    if (_monitorHoverWindow.isVisible) [_monitorHoverWindow orderFrontRegardless];
 }
 
 - (void)setMonitorHidden:(BOOL)hidden {
@@ -1015,8 +1198,11 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
 
 // 换外观时窗影也要跟着换：无底那档留着窗影，字后面就全是软影子
 - (void)applyMonitorShadow {
-    // 变形态一律没窗影：那时外框是矩形，窗影会出卖"其实是个斜的四边形"
-    BOOL shadow = ![self monitorQuadActive] && ((DeskStyle)_monitorStyle != DeskStyleBare);
+    // 变形态一律没窗影：那时外框是矩形，窗影会出卖"其实是个斜的四边形"。
+    // 无边玻璃也不要窗影：窗口 alpha 轮廓会被 WindowServer 压成一圈深边。
+    BOOL shadow = ![self monitorQuadActive]
+               && ((DeskStyle)_monitorStyle != DeskStyleBare)
+               && ((DeskStyle)_monitorStyle != DeskStyleHUD);
     for (NSWindow *w in _monitorWindows) w.hasShadow = shadow;
     _monitorHoverWindow.hasShadow = shadow;
 }
@@ -1030,6 +1216,24 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     [self applyMonitorShadow];
     [self saveConfig];
     [self syncMenu];
+}
+
+// 简略模式和完整模式共用同一组窗口/视图，只是卡片尺寸和绘制密度不同。
+// 切换时重建窗口：摆位档是"角 + 距边"，用新尺寸重算后当前角的 16pt 锚点不动。
+- (void)toggleMonitorCompact:(id)sender {
+    _monitorCompact = !_monitorCompact;
+    if (_monitorCompact && _monitorEditing) {
+        _monitorEditing = NO;
+        DeskLog(@"活动监视器进入简略模式：先退出调角");
+    }
+    NSSize card = [DeskMonitorView cardSizeCompact:_monitorCompact];
+    // 四角位移是点偏移；换成小卡片后不夹一下会把角留在画布外
+    _monitorQuad = DeskQuadOffsetsClamp(_monitorQuad, card);
+    [self saveConfig];
+    [self rebuildMonitorWindows];
+    [self syncMenu];
+    DeskLog(@"活动监视器简略模式：%@（卡片 %.0fx%.0f）",
+            _monitorCompact ? @"开" : @"关", card.width, card.height);
 }
 
 - (void)applyMonitorQuad:(DeskQuadOffsets)q {
@@ -1067,6 +1271,7 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
 // 拖不动的时候（被别的窗口压住、或者鼠标事件到不了桌面层），用户得有一条不依赖
 // "按住组件"就能挪它的出路。摆位本来就存在 _monitorPlaces 里，这里只是给它一个菜单口。
 - (void)moveMonitorToCorner:(id)sender {
+    if ([self refuseMoveWhenLocked:@"活动监视器摆到四角"]) return;
     NSInteger corner = [sender tag];
     for (NSScreen *screen in [NSScreen screens]) {
         DeskPlace p = [_monitorPlaces placeForScreen:screen];
@@ -1087,6 +1292,7 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
 // 从右上角挪到屏幕中间要二十多下。这里给九个落点，一次到位（不依赖按住拖，也不怕遮挡）。
 // tag = 行*3 + 列，行 0=上 1=中 2=下，列 0=左 1=中 2=右。
 - (void)placeMonitorAtCell:(id)sender {
+    if ([self refuseMoveWhenLocked:@"活动监视器九宫格摆位"]) return;
     NSWindow *w = _monitorWindows.firstObject;
     if (!w) { DeskLog(@"九宫格摆位：没有可摆的监视器窗口"); return; }
     NSScreen *screen = w.screen ?: [NSScreen mainScreen];
@@ -1094,11 +1300,12 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     NSInteger tag = [sender tag] & 15;
     NSInteger row = tag / 3, col = tag % 3;
     const CGFloat margin = 16.0;
+    NSSize card = [DeskMonitorView cardSizeCompact:_monitorCompact];
     CGFloat x = (col == 0) ? NSMinX(vf) + margin
-              : (col == 1) ? NSMidX(vf) - kMonitorViewWidth / 2.0
-                           : NSMaxX(vf) - kMonitorViewWidth - margin;
-    CGFloat y = (row == 0) ? NSMaxY(vf) - kMonitorViewHeight - margin
-              : (row == 1) ? NSMidY(vf) - kMonitorViewHeight / 2.0
+              : (col == 1) ? NSMidX(vf) - card.width / 2.0
+                           : NSMaxX(vf) - card.width - margin;
+    CGFloat y = (row == 0) ? NSMaxY(vf) - card.height - margin
+              : (row == 1) ? NSMidY(vf) - card.height / 2.0
                            : NSMinY(vf) + margin;
     [w setFrameOrigin:NSMakePoint(x, y)];
     [self saveMonitorPlaceInWindow:w];   // 存档是"角 + 距边"，换算只留这一处
@@ -1110,6 +1317,7 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
 }
 
 - (void)nudgeMonitor:(id)sender {
+    if ([self refuseMoveWhenLocked:@"活动监视器微调"]) return;
     CGFloat dx = 0, dy = 0;
     switch ([sender tag]) {
         case 0: dx = -20; break;   // 左
@@ -1237,11 +1445,12 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
         [self placeMonitorAtCell:it];
         NSRect f = w.frame;
         int row = i / 3, col = i % 3;
+        NSSize card = [DeskMonitorView cardSizeCompact:_monitorCompact];
         CGFloat wantX = col == 0 ? NSMinX(vf) + 16
-                      : col == 1 ? NSMidX(vf) - kMonitorViewWidth / 2.0
-                                 : NSMaxX(vf) - kMonitorViewWidth - 16;
-        CGFloat wantY = row == 0 ? NSMaxY(vf) - kMonitorViewHeight - 16
-                      : row == 1 ? NSMidY(vf) - kMonitorViewHeight / 2.0
+                      : col == 1 ? NSMidX(vf) - card.width / 2.0
+                                 : NSMaxX(vf) - card.width - 16;
+        CGFloat wantY = row == 0 ? NSMaxY(vf) - card.height - 16
+                      : row == 1 ? NSMidY(vf) - card.height / 2.0
                                  : NSMinY(vf) + 16;
         BOOL ok = fabs(f.origin.x - wantX) < 0.6 && fabs(f.origin.y - wantY) < 0.6;
         if (!ok) bad++;
@@ -1364,18 +1573,11 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     NSRect f = w.frame;
     // 存档里的 dx/dy 描述的是**看得见的卡片**。变形时窗口外扩一圈余量，
     // 不先按 pad 缩回卡片矩形的话，拖一次就漂 60pt，越拖越偏。
-    NSSize mcard = NSMakeSize(kMonitorViewWidth, kMonitorViewHeight);
-    NSSize mwin = [DeskMonitorView windowSizeWarped:[self monitorQuadActive]];
+    NSSize mcard = [DeskMonitorView cardSizeCompact:_monitorCompact];
+    NSSize mwin = [DeskMonitorView windowSizeWarped:[self monitorQuadActive] compact:_monitorCompact];
     CGFloat m_padX = (mwin.width - mcard.width) / 2.0, m_padY = (mwin.height - mcard.height) / 2.0;
     f = NSMakeRect(NSMinX(f) + m_padX, NSMinY(f) + m_padY, mcard.width, mcard.height);
-    DeskPlace p;
-    p.corner = (NSMidY(f) > vf.origin.y + vf.size.height / 2.0 ? 0 : 2)
-             + (NSMidX(f) > vf.origin.x + vf.size.width / 2.0 ? 1 : 0);
-    p.dx = MAX(0, (p.corner == 1 || p.corner == 3) ? NSMaxX(vf) - NSMaxX(f) : f.origin.x - vf.origin.x);
-    p.dy = MAX(0, (p.corner >= 2) ? f.origin.y - vf.origin.y : NSMaxY(vf) - NSMaxY(f));
-    // 夹边只保证整块仍在可视区内（下限 0）。以前下限是 16：组件本来就贴在 dx=dy=16，
-    // 往边上拖过头的那次被夹回 16，隔几十秒的「屏幕参数变更 → 重申位置」就把它搬回原位。
-    p = DeskPlaceClamp(p, mcard, vf);
+    DeskPlace p = DeskPlaceFromFrame(f, mcard, vf);
     if (NSIntersectsRect(f, vf)) {
         NSString *key = [_monitorPlaces keyForScreen:screen];
         [_monitorPlaces setPlace:p forKey:key];
@@ -1387,11 +1589,722 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     }
 }
 
+#pragma mark - 组件 4：签到 CREDITS
+
+- (NSRect)creditsFrameForScreen:(NSScreen *)screen {
+    NSRect vf = screen.visibleFrame;
+    DeskPlace p = [_creditsPlaces effectivePlaceForScreen:screen];
+    NSSize card = NSMakeSize(kCreditsViewWidth, kCreditsViewHeight);
+    CGFloat x = (p.corner == 1 || p.corner == 3) ? NSMaxX(vf) - card.width - p.dx
+                                                  : vf.origin.x + p.dx;
+    CGFloat y = (p.corner >= 2) ? vf.origin.y + p.dy : NSMaxY(vf) - card.height - p.dy;
+    NSRect r = NSMakeRect(round(x), round(y), card.width, card.height);
+    if (!NSIntersectsRect(r, vf)) {
+        p = _creditsPlaces.fallbackPlace;
+        DeskLog(@"签到档 %@ 落出可视区，夹回默认锚点（左上）", [_creditsPlaces keyForScreen:screen]);
+        [_creditsPlaces setPlace:p forKey:[_creditsPlaces keyForScreen:screen]];
+        [self saveConfig];
+        CGFloat fx = (p.corner == 1 || p.corner == 3) ? NSMaxX(vf) - card.width - p.dx
+                                                       : vf.origin.x + p.dx;
+        CGFloat fy = (p.corner >= 2) ? vf.origin.y + p.dy : NSMaxY(vf) - card.height - p.dy;
+        r = NSMakeRect(round(fx), round(fy), card.width, card.height);
+    }
+    return r;
+}
+
+- (NSWindow *)makeCreditsWindowForScreen:(NSScreen *)screen {
+    NSRect frame = [self creditsFrameForScreen:screen];
+    NSWindow *w = [[NSWindow alloc] initWithContentRect:frame
+                                              styleMask:NSWindowStyleMaskBorderless
+                                                backing:NSBackingStoreBuffered
+                                                  defer:NO];
+    [w setBackgroundColor:[NSColor clearColor]];
+    w.opaque = NO;
+    w.hasShadow = ((DeskStyle)_creditsStyle != DeskStyleHUD);
+    w.level = kCGDesktopIconWindowLevel;
+    w.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces
+                         | NSWindowCollectionBehaviorStationary
+                         | NSWindowCollectionBehaviorIgnoresCycle;
+    w.movableByWindowBackground = NO;
+    w.animationBehavior = NSWindowAnimationBehaviorNone;
+    w.excludedFromWindowsMenu = YES;
+    w.acceptsMouseMovedEvents = YES;   // 让悬停 tooltip 有事件；组件本身仍只画快照
+    w.title = @"DeskBoard 签到";
+    DeskCreditsView *v = [[DeskCreditsView alloc] initWithFrame:NSMakeRect(0, 0, NSWidth(frame), NSHeight(frame))];
+    v.style = (DeskStyle)_creditsStyle;
+    v.locked = _layoutLocked;
+    [v updateCenter:_creditsCenter ?: [DeskCreditsCenterSnapshot centerWithMiniMax:_credits.snapshot
+                                                                             trae:_trae.snapshot
+                                                                            qoder:_qoder.snapshot
+                                                                        workbuddy:_workbuddy.snapshot]];
+    __weak typeof(self) weakSelf = self;
+    __weak NSWindow *weakW = w;
+    v.onUserMove = ^{ [weakSelf saveCreditsPlaceInWindow:weakW]; };
+    v.onSlotActivate = ^(DeskCreditsPlatform p) { [weakSelf creditsActivatePlatform:p]; };
+    v.onSlotDoubleClick = ^(DeskCreditsPlatform p) { [weakSelf creditsDoubleClickPlatform:p]; };
+    v.onSlotCheckNow = ^(DeskCreditsPlatform p) { [weakSelf creditsCheckNowPlatform:p]; };
+    w.contentView = v;
+    [self logWindowSnapshot:w tag:@"签到"];
+    return w;
+}
+
+- (void)rebuildCreditsWindows {
+    for (NSWindow *w in _creditsWindows) [w orderOut:nil];
+    _creditsWindows = [NSMutableArray array];
+    for (NSScreen *screen in [NSScreen screens]) {
+        NSWindow *w = [self makeCreditsWindowForScreen:screen];
+        [_creditsWindows addObject:w];
+    }
+    [self applyCreditsVisibility];
+    DeskLog(@"签到建窗 %lu 个，%@，层级=%ld（桌面图标层）",
+            (unsigned long)_creditsWindows.count, _creditsHidden ? @"已隐藏" : @"已显示",
+            (long)kCGDesktopIconWindowLevel);
+}
+
+- (void)applyCreditsVisibility {
+    for (NSWindow *w in _creditsWindows) {
+        if (_creditsHidden) [w orderOut:nil];
+        else [w orderFrontRegardless];
+    }
+}
+
+// 同层竞争：访达的桌面窗和签到组件同在 kCGDesktopIconWindowLevel，它一旦排到组件前面
+// （刷新桌面、切 Space、换壁纸都会重排），签到块看着好好的却一点都点不动 —— 点击被它截走。
+// 弹药库和活动监视器各自有定时顶回，签到是第四块、建在它们之后，只在建窗/显隐时排过一次面。
+// 这一层没有「置顶」可设，只能定时顶回去。
+- (void)raiseCreditsAboveSameLayer {
+    if (_creditsHidden || _creditsWindows.count == 0) return;
+    for (NSWindow *w in _creditsWindows) {
+        NSView *v = w.contentView;
+        if ([v isKindOfClass:[DeskCreditsView class]] && [(DeskCreditsView *)v isDragging]) return;
+    }   // 正按住拖着的时候顶一层，等于从用户手里把窗口抢走
+    for (NSWindow *w in _creditsWindows) [w orderFrontRegardless];
+}
+
+- (void)applyCreditsFrames {
+    if (_applying) return;
+    _applying = YES;
+    NSUInteger i = 0;
+    for (NSScreen *screen in [NSScreen screens]) {
+        if (i >= _creditsWindows.count) break;
+        [_creditsWindows[i++] setFrame:[self creditsFrameForScreen:screen]
+                               display:YES animate:NO];
+    }
+    _applying = NO;
+}
+
+- (void)saveCreditsPlaceInWindow:(NSWindow *)w {
+    if (!w) return;
+    NSScreen *screen = w.screen ?: [NSScreen mainScreen];
+    NSRect vf = screen.visibleFrame;
+    NSRect f = w.frame;
+    DeskPlace p = DeskPlaceFromFrame(f, NSMakeSize(kCreditsViewWidth, kCreditsViewHeight), vf);
+    if (NSIntersectsRect(f, vf)) {
+        NSString *key = [_creditsPlaces keyForScreen:screen];
+        [_creditsPlaces setPlace:p forKey:key];
+        [self saveConfig];
+        DeskLog(@"签到位置已保存 %@ → 角 %ld 偏移 %.0f,%.0f", key, (long)p.corner, p.dx, p.dy);
+    } else {
+        DeskLog(@"签到整块拖出可视区，不存档，原地拉回");
+        [w setFrame:[self creditsFrameForScreen:screen] display:YES];
+    }
+}
+
+- (void)setCreditsHidden:(BOOL)hidden {
+    if (_creditsHidden == hidden) return;
+    _creditsHidden = hidden;
+    [self applyCreditsVisibility];
+    [self saveConfig];
+    [self syncMenu];
+    DeskLog(@"签到组件 %@ 已存档", hidden ? @"隐藏" : @"显示");
+}
+
+- (void)toggleCreditsHidden:(id)sender {
+    (void)sender;
+    [self setCreditsHidden:!_creditsHidden];
+}
+
+- (void)chooseCreditsStyle:(id)sender {
+    _creditsStyle = [sender tag];
+    for (NSWindow *w in _creditsWindows) {
+        NSView *v = w.contentView;
+        if ([v isKindOfClass:[DeskCreditsView class]]) {
+            ((DeskCreditsView *)v).style = (DeskStyle)_creditsStyle;
+        }
+        w.hasShadow = ((DeskStyle)_creditsStyle != DeskStyleHUD);
+    }
+    [self saveConfig];
+    [self syncMenu];
+    DeskLog(@"签到外观改为 %ld", (long)_creditsStyle);
+}
+
+- (void)resetCreditsPlace:(id)sender {
+    (void)sender;
+    if ([self refuseMoveWhenLocked:@"签到恢复默认位置"]) return;
+    for (NSScreen *screen in [NSScreen screens]) {
+        [_creditsPlaces setPlace:DeskPlaceDefaultForKind(DeskPlaceKindCredits)
+                          forKey:[_creditsPlaces keyForScreen:screen]];
+    }
+    [self applyCreditsFrames];
+    [self saveConfig];
+    [self syncMenu];
+    DeskLog(@"签到组件恢复默认位置（左上）");
+}
+
+- (void)applyCreditsRecordsToCenter:(DeskCreditsCenterSnapshot *)c {
+    if (!c || !_creditsRecords) return;
+    NSTimeInterval now = [NSDate date].timeIntervalSince1970;
+    DeskCreditsSnapshot *m = _credits.snapshot;
+    DeskTraeSnapshot *t = _trae.snapshot;
+    DeskQoderSnapshot *q = _qoder.snapshot;
+    DeskWorkbuddySnapshot *w = _workbuddy.snapshot;
+
+    // 能拿到稳定 uid 的平台按账号分档；换号时旧纪录和最近签到一起重置。
+    if (t.uid.length) [_creditsRecords setAccountKey:t.uid forPlatform:DeskCreditsPlatformTrae];
+    if (q.uid.length) [_creditsRecords setAccountKey:q.uid forPlatform:DeskCreditsPlatformQoder];
+    if (w.uid.length) [_creditsRecords setAccountKey:w.uid forPlatform:DeskCreditsPlatformWorkBuddy];
+
+    // 成功事件才写：provider 明确说“今天已签/已领”才标记；失败态不会走到这里。
+    if (m.todayChecked && m.dayKey.length) {
+        [_creditsRecords markCheckInPlatform:DeskCreditsPlatformMiniMax
+                                      amount:m.todayPoints dayKey:m.dayKey];
+    }
+    if (t.checkedIn && t.dayKey.length) {
+        [_creditsRecords markCheckInPlatform:DeskCreditsPlatformTrae
+                                      amount:t.todayCredits dayKey:t.dayKey];
+    }
+    if (w.checkedIn && w.dayKey.length) {
+        [_creditsRecords markCheckInPlatform:DeskCreditsPlatformWorkBuddy
+                                      amount:w.todayCredit dayKey:w.dayKey];
+    }
+    // Qoder 的“今天”按活动窗口起算：启动时若本窗口已领，窗口起始日就是领取日；
+    // 运行中真正领取的那一拍会由 applyQoderSnapshot: 用今天覆盖（更新的日期优先）。
+    if (q.claimed && q.windowStart > 0) {
+        [_creditsRecords markCheckInPlatform:DeskCreditsPlatformQoder
+                                      amount:q.claimedAmount
+                                      dayKey:DeskCreditsDayKey(q.windowStart)];
+    }
+
+    for (DeskCreditsSlot *slot in c.slots) {
+        if (slot.kind == DeskCreditsSlotKindUnconnected) continue;
+        if (slot.balance >= 0) {
+            [_creditsRecords samplePlatform:slot.platform balance:slot.balance at:now];
+        }
+    }
+    for (DeskCreditsSlot *slot in c.slots) {
+        if (slot.kind == DeskCreditsSlotKindUnconnected) continue;
+        [_creditsRecords applyPlatform:slot.platform toSlot:slot at:now];
+    }
+}
+
+- (void)applyCreditsSnapshot:(DeskCreditsSnapshot *)s {
+    _creditsCenter = [DeskCreditsCenterSnapshot centerWithMiniMax:s trae:_trae.snapshot
+                                                            qoder:_qoder.snapshot
+                                                        workbuddy:_workbuddy.snapshot];
+    [self applyCreditsRecordsToCenter:_creditsCenter];
+    for (NSWindow *w in _creditsWindows) {
+        NSView *v = w.contentView;
+        if ([v isKindOfClass:[DeskCreditsView class]]) {
+            [(DeskCreditsView *)v updateCenter:_creditsCenter];
+        }
+    }
+    [self syncMenu];
+}
+
+- (void)applyTraeSnapshot:(DeskTraeSnapshot *)t {
+    _creditsCenter = [DeskCreditsCenterSnapshot centerWithMiniMax:_credits.snapshot trae:t
+                                                            qoder:_qoder.snapshot
+                                                        workbuddy:_workbuddy.snapshot];
+    [self applyCreditsRecordsToCenter:_creditsCenter];
+    for (NSWindow *w in _creditsWindows) {
+        NSView *v = w.contentView;
+        if ([v isKindOfClass:[DeskCreditsView class]]) {
+            [(DeskCreditsView *)v updateCenter:_creditsCenter];
+        }
+    }
+    [self syncMenu];
+}
+
+- (void)applyWorkbuddySnapshot:(DeskWorkbuddySnapshot *)w {
+    _creditsCenter = [DeskCreditsCenterSnapshot centerWithMiniMax:_credits.snapshot
+                                                            trae:_trae.snapshot
+                                                           qoder:_qoder.snapshot
+                                                       workbuddy:w];
+    [self applyCreditsRecordsToCenter:_creditsCenter];
+    for (NSWindow *win in _creditsWindows) {
+        NSView *v = win.contentView;
+        if ([v isKindOfClass:[DeskCreditsView class]]) {
+            [(DeskCreditsView *)v updateCenter:_creditsCenter];
+        }
+    }
+    [self syncMenu];
+}
+
+- (void)applyQoderSnapshot:(DeskQoderSnapshot *)q {
+    // 运行中从“未领”变成“已领”的那一拍：领取日就是今天。
+    if (q.claimed && !_qoderClaimSeen && _creditsRecords) {
+        NSTimeInterval now = [NSDate date].timeIntervalSince1970;
+        [_creditsRecords markCheckInPlatform:DeskCreditsPlatformQoder
+                                      amount:q.claimedAmount
+                                      dayKey:DeskCreditsDayKey(now)];
+    }
+    _qoderClaimSeen = q.claimed;
+    _creditsCenter = [DeskCreditsCenterSnapshot centerWithMiniMax:_credits.snapshot
+                                                            trae:_trae.snapshot
+                                                           qoder:q
+                                                       workbuddy:_workbuddy.snapshot];
+    [self applyCreditsRecordsToCenter:_creditsCenter];
+    for (NSWindow *w in _creditsWindows) {
+        NSView *v = w.contentView;
+        if ([v isKindOfClass:[DeskCreditsView class]]) {
+            [(DeskCreditsView *)v updateCenter:_creditsCenter];
+        }
+    }
+    [self syncMenu];
+}
+
+- (void)startCreditsTicking {
+    if (_creditsTimer) return;
+    _lastCreditsHourlyHour = -1;
+    // 启动时先补一次；如果启动时已经过了本小时的 :05，就把这一小时记为已检查，
+    // 避免第一次 60s 定时器又重复跑一遍。10:04 启动则保持 -1，10:05 那拍会补上。
+    NSTimeInterval now = [NSDate date].timeIntervalSince1970;
+    if (DeskCreditsHourlyCheckDue(now, -1)) {
+        _lastCreditsHourlyHour = DeskCreditsHourOfDay(now);
+    }
+    _creditsTimer = [NSTimer scheduledTimerWithTimeInterval:60.0 target:self
+                                                   selector:@selector(creditsTick:)
+                                                   userInfo:nil repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:_creditsTimer forMode:NSRunLoopCommonModes];
+    [_credits start];
+    [_trae start];
+    [_qoder start];
+    [_workbuddy start];
+    NSTimeInterval intoDay = now - DeskCreditsDayStart(now);
+    NSInteger hour = DeskCreditsHourOfDay(now);
+    NSInteger minute = (NSInteger)(((long long)intoDay % 3600) / 60);
+    NSInteger nextHour = minute < 5 ? hour : (hour + 1) % 24;
+    DeskLog(@"签到调度：每天 10:05 自动签到，之后每小时 :05 检查一次，未签补签；下次检查 %02ld:05",
+            (long)nextHour);
+}
+
+- (void)creditsHourlyCheckNow {
+    [_credits tick];
+    [_trae tick];
+    [_qoder tick];
+    [_workbuddy tick];
+}
+
+- (void)creditsTick:(NSTimer *)t {
+    (void)t;
+    // 每小时补签是低频活，但顶回同层得按拍来做：不按时顶，桌面窗排到前面之后
+    // 这块组件就一直点不动（补签那条早退 return 会把顶回一起带走，所以放在最前面）。
+    [self raiseCreditsAboveSameLayer];
+    NSTimeInterval now = [NSDate date].timeIntervalSince1970;
+    if (!DeskCreditsHourlyCheckDue(now, _lastCreditsHourlyHour)) return;
+    _lastCreditsHourlyHour = DeskCreditsHourOfDay(now);
+    DeskLog(@"签到 每小时补签检查（%02ld:05 档）", (long)_lastCreditsHourlyHour);
+    [self creditsHourlyCheckNow];
+}
+
+- (void)creditsCheckNowAll:(id)sender {
+    (void)sender;
+    DeskLog(@"签到 手动：立即检查（补签）");
+    [self creditsHourlyCheckNow];
+}
+
+- (void)checkInAllNow:(id)sender {
+    (void)sender;
+    DeskLog(@"签到 手动：全部平台立即签到");
+    [self creditsCheckNowPlatform:DeskCreditsPlatformMiniMax];
+    [self creditsCheckNowPlatform:DeskCreditsPlatformTrae];
+    [self creditsCheckNowPlatform:DeskCreditsPlatformWorkBuddy];
+    [self creditsCheckNowPlatform:DeskCreditsPlatformQoder];
+}
+
+- (void)creditsCheckNowPlatform:(DeskCreditsPlatform)p {
+    switch (p) {
+        case DeskCreditsPlatformMiniMax: [self checkInNow:nil]; break;
+        case DeskCreditsPlatformTrae: [self traeCheckInNow:nil]; break;
+        case DeskCreditsPlatformWorkBuddy: [self workbuddyCheckInNow:nil]; break;
+        case DeskCreditsPlatformQoder: [self qoderCheckInNow:nil]; break;
+    }
+}
+
+- (void)systemDidWake:(NSNotification *)note {
+    (void)note;
+    NSTimeInterval now = [NSDate date].timeIntervalSince1970;
+    if (DeskCreditsHourlyCheckDue(now, -1)) {
+        _lastCreditsHourlyHour = DeskCreditsHourOfDay(now);
+    }
+    DeskLog(@"系统唤醒：签到立即刷新并检查领取");
+    [_credits refreshAsync];
+    [_credits tick];
+    [_trae refreshAsync];
+    [_trae tick];
+    [_qoder refreshAsync];
+    [_qoder tick];
+    [_workbuddy tick];
+}
+
+- (void)checkInNow:(id)sender {
+    (void)sender;
+    DeskCreditsSnapshot *s = _credits.snapshot;
+    if (!s.authorized || s.needsAuth) {
+        DeskLog(@"签到 尚未授权或登录已过期，先打开授权页");
+        [self reauthorizeCredits:nil];
+        return;
+    }
+    if (s.todayChecked) {
+        DeskLog(@"签到 今日已签，无需重复领取");
+        return;
+    }
+    if (s.claiming) {
+        DeskLog(@"签到 正在领取中");
+        return;
+    }
+    [_credits claimAsync];
+    DeskLog(@"签到 已请求立即签到");
+}
+
+- (void)refreshCreditsNow:(id)sender {
+    (void)sender;
+    DeskLog(@"签到 手动刷新");
+    [_credits refreshAsync];
+}
+
+- (void)openTraeApp:(id)sender {
+    (void)sender;
+    NSURL *u = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:@"cn.trae.app"];
+    if (!u) u = [NSURL fileURLWithPath:@"/Applications/Trae CN.app"];
+    [[NSWorkspace sharedWorkspace] openApplicationAtURL:u
+                                          configuration:[NSWorkspaceOpenConfiguration configuration]
+                                     completionHandler:nil];
+    DeskLog(@"签到 Trae 已打开客户端（续期由 IDE 自己完成，脚本不碰 refreshToken）");
+}
+
+- (void)traeCheckInNow:(id)sender {
+    (void)sender;
+    DeskTraeSnapshot *t = _trae.snapshot;
+    if (!t.connected || t.phase == DeskTraePhaseNeedsAuth) {
+        DeskLog(@"签到 Trae 没有可用登录态，先打开客户端登录");
+        [self openTraeApp:nil];
+        return;
+    }
+    if (t.checkedIn) {
+        DeskLog(@"签到 Trae 今日已签，无需重复领取");
+        return;
+    }
+    if (t.claiming) {
+        DeskLog(@"签到 Trae 正在领取中");
+        return;
+    }
+    [_trae claimAsync];
+    DeskLog(@"签到 Trae 已请求立即签到");
+}
+
+- (void)traeRefreshNow:(id)sender {
+    (void)sender;
+    DeskLog(@"签到 Trae 手动刷新");
+    [_trae refreshAsync];
+}
+
+- (void)traeReloadCredentials:(id)sender {
+    (void)sender;
+    DeskLog(@"签到 Trae 重新读取本机 storage.json");
+    [_trae load];
+    [_trae refreshAsync];
+}
+
+- (void)qoderCheckInNow:(id)sender {
+    (void)sender;
+    DeskQoderSnapshot *q = _qoder.snapshot;
+    if (!q.hasToken || q.tokenInvalid || q.phase == DeskQoderPhaseNeedsAuth) {
+        DeskLog(@"签到 Qoder 没有可用 PT，先设置令牌");
+        [self qoderSetToken:nil];
+        return;
+    }
+    if (q.claimed) {
+        DeskLog(@"签到 Qoder 本窗口已领，等%@",
+                DeskQoderRefreshText(q.windowEnd, [NSDate date].timeIntervalSince1970));
+        return;
+    }
+    if (q.claiming) {
+        DeskLog(@"签到 Qoder 正在领取中");
+        return;
+    }
+    [_qoder claimAsync];
+    DeskLog(@"签到 Qoder 已请求立即领取");
+}
+
+- (void)qoderRefreshNow:(id)sender {
+    (void)sender;
+    DeskLog(@"签到 Qoder 手动刷新");
+    [_qoder refreshAsync];
+}
+
+- (void)qoderSetToken:(id)sender {
+    (void)sender;
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = @"设置 Qoder PT 令牌";
+    alert.informativeText = @"在 Qoder 官网 / 客户端生成个人令牌（pt-…）。"
+        @"令牌只保存在本机 DeskBoard/Credits/qoder.json（0600），不会写入 Qoder 客户端目录。";
+    [alert addButtonWithTitle:@"保存"];
+    [alert addButtonWithTitle:@"取消"];
+    NSTextField *field = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 420, 24)];
+    field.placeholderString = @"pt-…";
+    alert.accessoryView = field;
+    if ([alert runModal] != NSAlertFirstButtonReturn) return;
+    NSError *err = nil;
+    if ([_qoder setPersonalToken:field.stringValue error:&err]) {
+        DeskLog(@"签到 Qoder PT 已更新，开始刷新");
+        [self syncMenu];
+    } else {
+        DeskLog(@"签到 Qoder PT 设置失败：%@", err.localizedDescription ?: @"未知原因");
+    }
+}
+
+- (void)openQoderUsage:(id)sender {
+    (void)sender;
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"https://qoder.cn/account/usage"]];
+}
+
+- (void)workbuddyLogin:(id)sender {
+    (void)sender;
+    __weak typeof(self) weakSelf = self;
+    [_workbuddy beginAuthorizationWithURLHandler:^(NSString *url) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSURL *u = [NSURL URLWithString:url];
+            if (u) [[NSWorkspace sharedWorkspace] openURL:u];
+            DeskLog(@"签到 WorkBuddy 已打开浏览器登录页（登录一次即可，之后自动签到）");
+            [weakSelf syncMenu];
+        });
+    } completion:^(BOOL ok, NSError *err) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (ok) DeskLog(@"签到 WorkBuddy 浏览器登录完成");
+            else DeskLog(@"签到 WorkBuddy 登录失败：%@", err.localizedDescription ?: @"未知原因");
+            [weakSelf syncMenu];
+        });
+    }];
+}
+
+- (void)workbuddyCheckInNow:(id)sender {
+    (void)sender;
+    DeskWorkbuddySnapshot *w = _workbuddy.snapshot;
+    if (!w.hasToken || w.tokenExpired) {
+        DeskLog(@"签到 WorkBuddy 未登录，先打开浏览器登录");
+        [self workbuddyLogin:nil];
+        return;
+    }
+    if (w.checkedIn) {
+        DeskLog(@"签到 WorkBuddy 今日已签，无需重复领取");
+        return;
+    }
+    if (w.claiming) {
+        DeskLog(@"签到 WorkBuddy 正在领取中");
+        return;
+    }
+    [_workbuddy claimAsync];
+    DeskLog(@"签到 WorkBuddy 已请求立即签到");
+}
+
+- (void)workbuddyRefreshNow:(id)sender {
+    (void)sender;
+    DeskLog(@"签到 WorkBuddy 手动刷新");
+    [_workbuddy refreshAsync];
+}
+
+- (void)workbuddyImportLocal:(id)sender {
+    (void)sender;
+    NSError *err = nil;
+    if ([_workbuddy importLocalSession:&err]) {
+        DeskLog(@"签到 WorkBuddy 已从本机 auth.info 导入明文登录态");
+    } else {
+        DeskLog(@"签到 WorkBuddy 本机导入失败：%@", err.localizedDescription ?: @"未知原因");
+    }
+}
+
+- (void)openWorkbuddyApp:(id)sender {
+    (void)sender;
+    NSURL *u = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:@"com.workbuddy.workbuddy"];
+    if (!u) u = [NSURL fileURLWithPath:@"/Applications/WorkBuddy.app"];
+    [[NSWorkspace sharedWorkspace] openURL:u];
+}
+
+- (void)reauthorizeCredits:(id)sender {
+    (void)sender;
+    __weak typeof(self) weakSelf = self;
+    [_credits beginAuthorizationWithURLHandler:^(NSString *url) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSURL *u = [NSURL URLWithString:url];
+            if (u) [[NSWorkspace sharedWorkspace] openURL:u];
+            DeskLog(@"签到 已打开浏览器授权页（独立登录，不回写 MiniMax Code 客户端凭据）");
+            [weakSelf syncMenu];
+        });
+    } completion:^(BOOL ok, NSError *err) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (ok) DeskLog(@"签到 浏览器授权完成");
+            else DeskLog(@"签到 授权失败：%@", err.localizedDescription ?: @"未知原因");
+            [weakSelf syncMenu];
+        });
+    }];
+}
+
+- (void)openMiniMaxWeb:(id)sender {
+    (void)sender;
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"https://agent.minimax.cn/"]];
+}
+
+- (NSString *)creditsPlatformName:(DeskCreditsPlatform)p {
+    switch (p) {
+        case DeskCreditsPlatformMiniMax: return @"MiniMax";
+        case DeskCreditsPlatformTrae: return @"Trae";
+        case DeskCreditsPlatformWorkBuddy: return @"WorkBuddy";
+        case DeskCreditsPlatformQoder: return @"Qoder";
+    }
+    return @"?";
+}
+
+// 组件里的授权入口：MiniMax 未授权 / 登录过期时，单击格子直接发起浏览器授权。
+// 其余平台还没接入，只记日志；它们将来的本机导入授权也走同一个入口。
+- (void)creditsActivatePlatform:(DeskCreditsPlatform)p {
+    if (p == DeskCreditsPlatformWorkBuddy) {
+        DeskWorkbuddySnapshot *w = _workbuddy.snapshot;
+        if (!w.hasToken || w.tokenExpired) {
+            DeskLog(@"签到 WorkBuddy 未登录 / 登录过期：打开浏览器登录");
+            [self workbuddyLogin:nil];
+            return;
+        }
+        if (w.authorizing) {
+            DeskLog(@"签到 WorkBuddy 正在等待浏览器登录");
+            return;
+        }
+        if (w.claiming) {
+            DeskLog(@"签到 WorkBuddy 正在领取中");
+            return;
+        }
+        DeskLog(@"签到 WorkBuddy 组件点击：刷新状态");
+        [_workbuddy refreshAsync];
+        return;
+    }
+    if (p == DeskCreditsPlatformQoder) {
+        DeskQoderSnapshot *q = _qoder.snapshot;
+        if (!q.hasToken || q.tokenInvalid || q.phase == DeskQoderPhaseNeedsAuth) {
+            DeskLog(@"签到 Qoder 没有可用 PT：打开令牌设置");
+            [self qoderSetToken:nil];
+            return;
+        }
+        if (q.claiming) {
+            DeskLog(@"签到 Qoder 正在领取中");
+            return;
+        }
+        DeskLog(@"签到 Qoder 组件点击：刷新额度与活动");
+        [_qoder refreshAsync];
+        return;
+    }
+    if (p == DeskCreditsPlatformTrae) {
+        DeskTraeSnapshot *t = _trae.snapshot;
+        if (!t.connected || t.phase == DeskTraePhaseNeedsAuth) {
+            DeskLog(@"签到 Trae 未登录 / 登录过期：打开客户端");
+            [self openTraeApp:nil];
+            return;
+        }
+        if (t.claiming) {
+            DeskLog(@"签到 Trae 正在领取中");
+            return;
+        }
+        DeskLog(@"签到 Trae 组件点击：刷新状态");
+        [_trae refreshAsync];
+        return;
+    }
+    if (p != DeskCreditsPlatformMiniMax) {
+        DeskLog(@"签到 %@ 尚未接入（菜单 › 签到中心 › %@ 里已预留接入动作）",
+                [self creditsPlatformName:p], [self creditsPlatformName:p]);
+        return;
+    }
+    DeskCreditsSnapshot *s = _credits.snapshot;
+    if (!s.authorized || s.needsAuth) {
+        DeskLog(@"签到 从组件点击发起 MiniMax 授权");
+        [self reauthorizeCredits:nil];
+        return;
+    }
+    if (s.authorizing) {
+        DeskLog(@"签到 正在等待浏览器授权");
+        return;
+    }
+    DeskLog(@"签到 组件点击 MiniMax：刷新状态");
+    [_credits refreshAsync];
+}
+
+- (void)creditsDoubleClickPlatform:(DeskCreditsPlatform)p {
+    if (p == DeskCreditsPlatformWorkBuddy) {
+        [self workbuddyCheckInNow:nil];
+        return;
+    }
+    if (p == DeskCreditsPlatformQoder) {
+        [self qoderCheckInNow:nil];
+        return;
+    }
+    if (p == DeskCreditsPlatformTrae) {
+        [self traeCheckInNow:nil];
+        return;
+    }
+    if (p != DeskCreditsPlatformMiniMax) {
+        DeskLog(@"签到 %@ 尚未接入（双击不动作）", [self creditsPlatformName:p]);
+        return;
+    }
+    [self checkInNow:nil];
+}
+
+- (void)creditsPlaceholderAction:(id)sender {
+    DeskLog(@"签到 占位动作（尚未接入）：%@", [sender title]);
+}
+
+- (NSString *)creditsSummaryTextForCenter:(DeskCreditsCenterSnapshot *)c {
+    NSMutableString *s = [NSMutableString stringWithFormat:@"%ld 已办 · %ld 待办",
+                          (long)c.doneCount, (long)c.pendingCount];
+    if (c.errorCount > 0) {
+        [s appendFormat:@" · %ld 异常", (long)c.errorCount];
+    } else {
+        NSInteger unconnected = (NSInteger)c.slots.count - c.connectedCount;
+        if (unconnected > 0) [s appendFormat:@" · %ld 待接入", (long)unconnected];
+    }
+    return s;
+}
+
+- (NSString *)creditsMiniMaxHeadline {
+    DeskCreditsSnapshot *s = _credits.snapshot;
+    if (!s.authorized) return @"未授权";
+    if (s.needsAuth) return @"登录过期";
+    if (s.authorizing) return @"等待授权";
+    if (s.claiming) return @"签到中";
+    if (s.claimFailed) return @"领取失败";
+    if (s.todayChecked) {
+        return s.todayPoints >= 0
+            ? [NSString stringWithFormat:@"已签 +%@", DeskCreditsFormatPoints(s.todayPoints)]
+            : @"已签";
+    }
+    if (s.hasToday) {
+        return s.todayPoints >= 0
+            ? [NSString stringWithFormat:@"待签 +%@", DeskCreditsFormatPoints(s.todayPoints)]
+            : @"待签";
+    }
+    if (s.refreshing) return @"同步中";
+    return @"—";
+}
+
+- (NSString *)creditsMenuTitleForSlot:(DeskCreditsSlot *)s {
+    if (s.kind == DeskCreditsSlotKindUnconnected) {
+        return [NSString stringWithFormat:@"%@ · 待接入", s.name];
+    }
+    return [NSString stringWithFormat:@"%@ · %@", s.name, s.statusText];
+}
+
 - (void)startMonitorSampling {
     if (_monitorSampleTimer) return;
-    // 5 秒一拍，和原生活动监视器的默认刷新档一致：这块榜的数字本来就是慢变量，
-    // 2 秒那一档实测把整个 App 从 2.0% 抬到 3.9%，换来的只是数字抖得更快
-    _monitorSampleTimer = [NSTimer scheduledTimerWithTimeInterval:5.0 target:self
+    // 10 秒一拍采进程榜。5 秒档实测还有一次 6% 左右的整卡重画尖峰；
+    // 进程榜是桌面上的慢读，10 秒完全够用，CPU 窗口也跟着改 10s。
+    _monitorSampleTimer = [NSTimer scheduledTimerWithTimeInterval:10.0 target:self
                                                          selector:@selector(refreshMonitor:)
                                                          userInfo:nil repeats:YES];
     [[NSRunLoop mainRunLoop] addTimer:_monitorSampleTimer forMode:NSRunLoopCommonModes];
@@ -1437,46 +2350,54 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     }
 }
 
-// 5 秒一拍采进程。采和画是分开的：动画表空闲就停，但榜不能停，
+// 10 秒一拍采进程。采和画是分开的：动画表空闲就停，但榜不能停，
 // 不然桌面上一动不动，谁也不知道机器现在在干什么
 // 隐藏时也要继续采：不然"隐藏 6 小时"会在历史里留 6 小时的空洞，而 12h 平均的分母
 // 是窗口本身，那段空洞会被当成 0 计进去，恢复显示后数字长期偏低且看不出来。
 - (void)refreshMonitor:(NSTimer *)t {
     BOOL live = !_monitorHidden && _monitorWindows.count > 0;
-    // 每一拍顺手把自己顶回同层最前（5 秒一档，和弹药库那 3 秒一档同一量级）：
-    // 不这么做的话，访达哪天排到前面，组件就一直点不动，直到下次重建窗口才偶然恢复
-    [self raiseMonitorAboveSameLayer];
     NSArray<DeskProc *> *rows = [_procs sample];
     _monitorCount = (NSInteger)rows.count;
     double energySum = 0;
     for (DeskProc *p in rows) if (p.energy > 0) energySum += p.energy;
     if (!_monitorHidden) [self recordHistory:rows energy:energySum];
 
-    // 榜头那四个总量读数复用面板那一拍采到的系统指标，不为这个组件多跑一次 IOKit
+    // 隐藏时只采数据（历史不断），不更新界面：不可见的卡片重画和缓动都是白烧电
+    if (!live) return;
+
+    // 榜头总量平时由 refreshStats 每 10 秒推过来（两块同一拍）；这里再设一次是给
+    // 建窗后的首拍兜底，不额外跑 IOKit。
     DeskStats *st = _lastStats;
     for (NSWindow *w in _monitorWindows) {
         DeskMonitorView *v = (DeskMonitorView *)w.contentView;
         if (![v isKindOfClass:[DeskMonitorView class]]) continue;
+        // 被应用窗口完全盖住时继续更新数据（切回桌面不能是几分钟前的旧数），
+        // 但不重画、不启动 60fps 缓动 —— 看不见的帧画了也没人看。
+        v.drawSuppressed = WidgetWindowCovered(w);
         if (st) {
             v.totalCPU = st.cpu;
             v.totalMemUsed = st.memUsed;
             v.totalMemPhys = st.memTotal;
+            v.totalNetRecv = st.netRecv;
+            v.totalNetSend = st.netSend;
         }
         v.totalEnergy = energySum;
-        v.procCount = rows.count;
         [v updateRows:rows];
     }
-    (void)live;
 }
 
-// 喂一拍历史。dt 用真实时间差而不是写死的 5 —— 定时器会漂，系统睡眠醒来还会跳拍
+// 喂一拍历史。dt 用真实时间差而不是写死的 10 —— 定时器会漂，系统睡眠醒来还会跳拍
 - (void)recordHistory:(NSArray<DeskProc *> *)rows energy:(double)energySum {
     NSTimeInterval now = [NSDate date].timeIntervalSince1970;
-    double dt = _histLastAt > 0 ? now - _histLastAt : 5.0;
+    double dt = _histLastAt > 0 ? now - _histLastAt : 10.0;
     _histLastAt = now;
     DeskStats *st = _lastStats;
-    double totals[4] = { st ? st.cpu : 0, st ? (double)st.memUsed : 0,
-                         energySum, st ? (st.netRecv + st.netSend) / 1024.0 : 0 };
+    double totals[4] = {
+        (st && st.cpu >= 0) ? st.cpu : 0,
+        st ? (double)st.memUsed : 0,
+        energySum,
+        (st && st.netRecv >= 0 && st.netSend >= 0) ? (st.netRecv + st.netSend) : 0
+    };
     [_hist noteSampleAt:now seconds:dt rows:rows totals:totals];
     [_hist flushIfNeeded];      // 内部限流：每分钟最多写一次盘
     if (_hist.recordedSeconds < 3600 && fmod(now, 300) < 6.0) {
@@ -1499,6 +2420,12 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
                                                        selector:@selector(checkVaultCover:)
                                                        userInfo:nil repeats:YES];
     [[NSRunLoop mainRunLoop] addTimer:_vaultCoverTimer forMode:NSRunLoopCommonModes];
+    // 卡片 / 监视器 / 签到都要定时顶回本层最前：访达桌面窗会整块压住它们，点击到不了视图。
+    // 3s 和弹药库置顶同频；orderFrontRegardless 在窗口已在前时几乎不花钱。
+    _cardRaiseTimer = [NSTimer scheduledTimerWithTimeInterval:3.0 target:self
+                                                     selector:@selector(raiseSameLayerTimer:)
+                                                     userInfo:nil repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:_cardRaiseTimer forMode:NSRunLoopCommonModes];
 }
 
 - (void)resumeWidgetTicking {
@@ -1511,20 +2438,24 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     [[NSRunLoop mainRunLoop] addTimer:_widgetTick forMode:NSRunLoopCommonModes];
 }
 
-// 停表不等于睡死：留一个 10Hz 的看门狗兜底，万一某个动画没走 setNeedsDisplay 这条路，
-// 最多 100ms 也能把表叫回来
+// 停表不等于睡死：留一个 1Hz 的看门狗兜底，万一某个动画没走 setNeedsDisplay 这条路，
+// 最多 1 秒也能把表叫回来。原来是 10Hz，空闲时每天白醒 86 万次，实测占本组件能耗的可观一份。
 - (void)parkWidgetTicking {
     if (!_widgetTick) return;
     [_widgetTick invalidate];
     _widgetTick = nil;
     if (_widgetWatchdog) return;
-    _widgetWatchdog = [NSTimer scheduledTimerWithTimeInterval:0.1 target:self
+    _widgetWatchdog = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self
                                                     selector:@selector(widgetWatchdog:)
                                                     userInfo:nil repeats:YES];
     [[NSRunLoop mainRunLoop] addTimer:_widgetWatchdog forMode:NSRunLoopCommonModes];
 }
 
 - (void)widgetWatchdog:(NSTimer *)t {
+    for (NSWindow *w in _windows) {
+        DeskCardView *v = (DeskCardView *)w.contentView;
+        if ([v isKindOfClass:[DeskCardView class]] && [v needsRedraw]) { [self resumeWidgetTicking]; break; }
+    }
     for (NSWindow *w in _vaultWindows) {
         DeskVaultView *v = (DeskVaultView *)w.contentView;
         if ([v isKindOfClass:[DeskVaultView class]] && [v needsRedraw]) { [self resumeWidgetTicking]; break; }
@@ -1548,6 +2479,13 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     if (dt <= 0 || dt > 1.0) dt = 1.0 / 60.0;   // 机器睡过就按一帧算，别让动画瞬移
 
     BOOL busy = NO;
+    // 卡片自己只有采样到点后的 0.9 秒要逐帧，平时由面板的 1Hz 采样钟自己标脏
+    for (NSWindow *w in _windows) {
+        DeskCardView *v = (DeskCardView *)w.contentView;
+        if (![v isKindOfClass:[DeskCardView class]]) continue;
+        [v tick:dt];
+        if ([v needsRedraw]) busy = YES;
+    }
     for (NSWindow *w in _vaultWindows) {
         DeskVaultView *v = (DeskVaultView *)w.contentView;
         if (![v isKindOfClass:[DeskVaultView class]]) continue;
@@ -1623,7 +2561,8 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
                          sc.frame.size.width, sc.frame.size.height,
                          sc.visibleFrame.size.width, sc.visibleFrame.size.height];
     BOOL dirty = _places.pendingCount > 0;
-    NSString *status = dirty ? @"未保存" : (_savedStamp.length ? [@"已保存 " stringByAppendingString:_savedStamp] : @"已对齐存档");
+    NSString *status = _layoutLocked ? @"已锁定"
+        : (dirty ? @"未保存" : (_savedStamp.length ? [@"已保存 " stringByAppendingString:_savedStamp] : @"已对齐存档"));
     NSSize hs = [DeskHudView sizeForReadout:readout status:status];
     _hudView.readout = readout;
     _hudView.status = status;
@@ -1652,6 +2591,90 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     [self updateHud];
 }
 
+// 只重置当前屏位档；其他分辨率的历史档位不动
+- (void)resetPlaceStore:(DeskPlaceStore *)store kind:(DeskPlaceKind)kind {
+    if ([self refuseMoveWhenLocked:@"恢复默认位置"]) return;
+    DeskPlace p = DeskPlaceDefaultForKind(kind);
+    for (NSScreen *screen in [NSScreen screens]) {
+        [store setPlace:p forKey:[store keyForScreen:screen]];
+    }
+    [store discardPending];
+    [self saveConfig];
+}
+
+- (void)resetCardPlace:(id)sender {
+    [self resetPlaceStore:_places kind:DeskPlaceKindPanel];
+    [self reassertFrames];
+    DeskLog(@"卡片恢复默认摆位（右上 16/16）");
+}
+
+- (void)resetVaultPlace:(id)sender {
+    [self resetPlaceStore:_vaultPlaces kind:DeskPlaceKindVault];
+    [self applyVaultFrames];
+    DeskLog(@"弹药库恢复默认摆位（左下 16/16）");
+}
+
+- (void)resetMonitorPlace:(id)sender {
+    [self resetPlaceStore:_monitorPlaces kind:DeskPlaceKindMonitor];
+    [self applyMonitorFrames];
+    DeskLog(@"活动监视器恢复默认摆位（右下 16/16）");
+}
+
+#pragma mark - 全局锁定与位置记忆
+
+// 锁定的唯一出口：四块视图都不再启动窗口拖动，菜单里的搬位动作也在这里被拦住。
+- (BOOL)refuseMoveWhenLocked:(NSString *)what {
+    if (!_layoutLocked) return NO;
+    DeskLog(@"%@：位置已锁定，先从菜单栏「锁定位置」解锁", what ?: @"移动");
+    return YES;
+}
+
+- (void)applyLayoutLockToViews {
+    for (NSWindow *w in _windows) {
+        NSView *v = w.contentView;
+        if ([v isKindOfClass:[DeskCardView class]]) ((DeskCardView *)v).locked = _layoutLocked;
+    }
+    for (NSWindow *w in _vaultWindows) {
+        NSView *v = w.contentView;
+        if ([v isKindOfClass:[DeskVaultView class]]) ((DeskVaultView *)v).locked = _layoutLocked;
+    }
+    for (NSWindow *w in _monitorWindows) {
+        NSView *v = w.contentView;
+        if ([v isKindOfClass:[DeskMonitorView class]]) ((DeskMonitorView *)v).locked = _layoutLocked;
+    }
+    for (NSWindow *w in _creditsWindows) {
+        NSView *v = w.contentView;
+        if ([v isKindOfClass:[DeskCreditsView class]]) ((DeskCreditsView *)v).locked = _layoutLocked;
+    }
+}
+
+// 「调整位置并锁定后，该位置即作为默认位置」：
+// 卡片拖动只挂"待保存"，锁定这一刻替它点一次保存；其余三块拖完即落档，这里再按
+// 当前窗口校准一遍，保证"看得见的窗口"和"重启后去的地方"是同一个。
+- (void)captureAllPlaces {
+    // 隐藏中的窗口没有可调整的现场：不按它们回写，免得离屏窗的 w.screen 退化成主屏、
+    // 把主屏档位覆盖成别块屏的坐标。卡片的"待保存"仍照常提交。
+    for (NSWindow *w in _windows) if (w.isVisible) [self recordPendingPlaceInWindow:w];
+    BOOL hadPending = [_places commitPending];
+    for (NSWindow *w in _vaultWindows) if (w.isVisible) [self saveVaultPlaceInWindow:w];
+    for (NSWindow *w in _monitorWindows) if (w.isVisible) [self saveMonitorPlaceInWindow:w];
+    for (NSWindow *w in _creditsWindows) if (w.isVisible) [self saveCreditsPlaceInWindow:w];
+    [self saveConfig];
+    DeskLog(@"锁定位置：四块当前摆位已落档%@", hadPending ? @"（含卡片的待保存）" : @"");
+}
+
+- (void)toggleLayoutLock:(id)sender {
+    (void)sender;
+    _layoutLocked = !_layoutLocked;
+    if (_layoutLocked) [self captureAllPlaces];
+    [self applyLayoutLockToViews];
+    [self saveConfig];
+    [self syncMenu];
+    [self updateHud];
+    DeskLog(@"全局布局锁定：%@（四块组件%@拖动）",
+            _layoutLocked ? @"开" : @"关", _layoutLocked ? @"不可" : @"可以");
+}
+
 - (void)applyModel {
     NSUInteger i = 0;
     _applying = YES;
@@ -1659,13 +2682,29 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
         if (i >= _windows.count) break;
         NSWindow *w = _windows[i++];
         DeskCardView *card = (DeskCardView *)w.contentView;
-        [card updateModel:_model];   // 内部会重预渲染 Stand 素材
+        // 被应用窗口完全盖住时只校正窗口位置，不重排/重画卡片。
+        // 卡片每 10 秒的一次全量 CoreText + 壁纸重绘在不可见时是纯白烧，
+        // 实测正是盖着时那 3~4% 的尖峰。切回桌面由 occlusion 通知补一次 updateModel。
+        BOOL covered = WidgetWindowCovered(w);
+        if (!covered) {
+            [card updateModel:_model];   // 内部会重预渲染 Stand 素材
+        }
         NSRect frame = [self frameForSize:[DeskPanelView sizeForModel:_model] screen:screen];
-        if (!NSEqualRects(w.frame, frame)) [w setFrame:frame display:YES animate:NO];
-        [card setNeedsDisplay:YES];      // 背景采样图要跟位置与壁纸变化走
+        if (!NSEqualRects(w.frame, frame)) [w setFrame:frame display:!covered animate:NO];
+        if (!covered) [card setNeedsDisplay:YES];      // 背景采样图要跟位置与壁纸变化走
     }
     _applying = NO;
     [self updateHud];
+}
+
+// 卡片重新露出来时补一次内容更新（被盖住期间跳过了 updateModel）
+- (void)mainOcclusionChanged:(NSNotification *)note {
+    NSWindow *w = note.object;
+    if (![w isKindOfClass:[NSWindow class]]) return;
+    if (!(w.occlusionState & NSWindowOcclusionStateVisible)) return;
+    if ([_windows indexOfObjectIdenticalTo:w] == NSNotFound) return;
+    NSView *v = w.contentView;
+    if ([v isKindOfClass:[DeskCardView class]]) [(DeskCardView *)v updateModel:_model];
 }
 
 - (void)reload {
@@ -1674,31 +2713,68 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     [self applyModel];
 }
 
+// 卡片和活动监视器必须显示同一拍快照：10 秒一次的系统采样出来后，把总量读数一并推给
+// 活动监视器并重绘，不再等它自己那一拍。否则并排看时，一个是刚采的、一个最多差 10 秒。
+- (void)pushStatsToMonitor:(DeskStats *)st {
+    if (!st || _monitorHidden) return;
+    for (NSWindow *w in _monitorWindows) {
+        DeskMonitorView *v = (DeskMonitorView *)w.contentView;
+        if (![v isKindOfClass:[DeskMonitorView class]]) continue;
+        v.totalCPU = st.cpu;
+        v.totalMemUsed = st.memUsed;
+        v.totalMemPhys = st.memTotal;
+        v.totalNetRecv = st.netRecv;
+        v.totalNetSend = st.netSend;
+        // 不在这里单独重画：活动监视器自己的 10 秒那一拍会用同一份 _lastStats 更新
+        // 并 updateRows；两处各画一次等于每 10 秒白画一张整卡。
+    }
+}
+
+// 窗口重新露出来时先把上一拍的内容画出来，别让用户对着旧画面等下一次 10 秒采样。
+// 只重画，不再采一轮 —— 采样会有几十毫秒的卡顿，下一拍马上就到了。
+- (void)monitorOcclusionChanged:(NSNotification *)note {
+    NSWindow *w = note.object;
+    if (![w isKindOfClass:[NSWindow class]]) return;
+    NSView *v = w.contentView;
+    if (![v isKindOfClass:[DeskMonitorView class]]) return;
+    if (w.occlusionState & NSWindowOcclusionStateVisible) {
+        ((DeskMonitorView *)v).drawSuppressed = NO;
+        [v setNeedsDisplay:YES];
+    }
+}
+
 // 系统指标每拍都要重画，油价数据只在文件变化时重建
 - (void)refreshStats {
+    _lastStatsAt = [NSDate date].timeIntervalSince1970;
     DeskStats *s = [_sys sample];
     _lastStats = s;
     [_model updateStats:s];
     [self applyModel];
-    if (++_tick % 30 == 0) {   // 约每分钟留一条轨迹，证明在持续取数而不是停在某一帧
-        DeskLog(@"刷新 CPU=%.0f%% GPU=%.0f%% 内存=%.1f/%.0fG 磁盘读=%.1f 写=%.1f MB/s",
-                s.cpu, s.gpu, s.memUsed / 1e9, s.memTotal / 1e9, s.diskRead / 1e6, s.diskWrite / 1e6);
+    [self pushStatsToMonitor:s];
+    if (++_tick % 6 == 0) {   // 10 秒一拍 × 6 ≈ 每分钟留一条轨迹，证明在持续取数而不是停在某一帧
+        DeskLog(@"刷新 CPU=%.0f%%（%.0fs 窗口） GPU=%.0f%% 内存=%.1f/%.0fGiB 磁盘读=%.1f 写=%.1f MB/s",
+                s.cpu, s.cpuWindow, s.gpu, s.memUsed / 1073741824.0, s.memTotal / 1073741824.0,
+                s.diskRead / 1e6, s.diskWrite / 1e6);
     }
 }
 
 - (void)startPolling {
     // 监听目录收不到"原地覆盖同一个文件"的写入，监听文件又会在原子替换后失效，
     // 所以轮询 mtime+size：任何写入方式（cp、编辑器保存、mv 替换）都能覆盖。
+    // 文件检查 2 秒一次（很便宜）；系统指标采样重，10 秒一次，和活动监视器那一拍对齐。
     [NSTimer scheduledTimerWithTimeInterval:2.0 target:self selector:@selector(pollFile)
                                    userInfo:nil repeats:YES];
 }
 
 - (void)pollFile {
+    NSTimeInterval now = [NSDate date].timeIntervalSince1970;
     NSString *stamp = [self currentStamp];
     BOOL same = (stamp && _stamp) ? [stamp isEqualToString:_stamp] : (stamp == _stamp);
-    if (same) { [self refreshStats]; return; }
-    _stamp = stamp;
-    [self reload];
+    if (!same) {
+        _stamp = stamp;
+        [self reload];
+    }
+    if (_lastStatsAt == 0 || now - _lastStatsAt >= 10.0) [self refreshStats];
 }
 
 #pragma mark - 拖拽后归位
@@ -1713,11 +2789,7 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     NSRect f = w.frame;
     NSRect cf = NSInsetRect(f, (f.size.width - cardSize.width) / 2.0,
                             (f.size.height - cardSize.height) / 2.0);
-    DeskPlace p;
-    p.corner = (NSMidY(cf) > vf.origin.y + vf.size.height / 2.0 ? 0 : 2)
-             + (NSMidX(cf) > vf.origin.x + vf.size.width / 2.0 ? 1 : 0);
-    p.dx = MAX(0, (p.corner == 1 || p.corner == 3) ? NSMaxX(vf) - NSMaxX(cf) : cf.origin.x - vf.origin.x);
-    p.dy = MAX(0, (p.corner >= 2) ? cf.origin.y - vf.origin.y : NSMaxY(vf) - NSMaxY(cf));
+    DeskPlace p = DeskPlaceFromFrame(cf, cardSize, vf);
     [_places setPending:p forKey:[_places keyForScreen:screen]];
     [self updateHud];
 }
@@ -1733,6 +2805,38 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     }
     [parts sortUsingSelector:@selector(compare:)];
     return [parts componentsJoinedByString:@"|"];
+}
+
+// 分辨率真的变了：把上一档的当前摆位搬到新档位，并同步同一块屏的所有旧档位。
+// 不再让「同屏最近一条历史记录」决定新分辨率的位置 —— 那条记录可能来自旧布局，
+// 会把用户刚摆好的锚点带回左下/右下之类的旧地方。
+- (void)carryPlacesFromScreenSignature:(NSString *)oldSig {
+    NSDictionary<NSString *, NSString *> *oldKeys =
+        DeskPlaceKeysByDisplayFromSignature(oldSig ?: @"");
+    if (oldKeys.count == 0) return;
+    BOOL changed = NO;
+    for (NSScreen *screen in [NSScreen screens]) {
+        NSNumber *idNum = screen.deviceDescription[@"NSScreenNumber"];
+        NSString *displayID = idNum ? idNum.stringValue : nil;
+        NSString *oldKey = displayID ? oldKeys[displayID] : nil;
+        NSString *newKey = [_places keyForScreen:screen];
+        if (!oldKey.length || !newKey.length || [oldKey isEqualToString:newKey]) continue;
+        DeskPlace p = [_places placeForKey:oldKey];
+        [_places setPlace:p forKey:newKey];
+        [_places setPlace:p forKeysMatchingDisplayID:displayID];
+        p = [_vaultPlaces placeForKey:oldKey];
+        [_vaultPlaces setPlace:p forKey:newKey];
+        [_vaultPlaces setPlace:p forKeysMatchingDisplayID:displayID];
+        p = [_monitorPlaces placeForKey:oldKey];
+        [_monitorPlaces setPlace:p forKey:newKey];
+        [_monitorPlaces setPlace:p forKeysMatchingDisplayID:displayID];
+        p = [_creditsPlaces placeForKey:oldKey];
+        [_creditsPlaces setPlace:p forKey:newKey];
+        [_creditsPlaces setPlace:p forKeysMatchingDisplayID:displayID];
+        DeskLog(@"分辨率变化：%@ → %@，四块按当前锚点搬到新档位（旧档位同步）", oldKey, newKey);
+        changed = YES;
+    }
+    if (changed) [self saveConfig];
 }
 
 // 屏幕参数变更期间（切分辨率、接拔显示器）系统会先平移现有窗口再发通知，
@@ -1752,13 +2856,15 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
                        dispatch_get_main_queue(), ^{ [self reassertAllFrames]; });
         return;
     }
+    if (_screenSig) [self carryPlacesFromScreenSignature:_screenSig];
     _screenSig = sig;
-    DeskLog(@"屏幕配置真的变了：%@ —— 重建三块组件的窗口", sig);
+    DeskLog(@"屏幕配置真的变了：%@ —— 重建四块组件的窗口", sig);
     [self rebuildWindows];
     [self rebuildVaultWindows];
     // 第三块组件也必须跟着重建：屏幕参数一变，存档里的档位可能整体落空（窗口留在旧屏幕上），
     // 上一版这里只重建了卡片和弹药库，活动监视器就成了"改完外观后不再刷新"的那种幽灵窗口
     [self rebuildMonitorWindows];
+    [self rebuildCreditsWindows];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ [self reassertAllFrames]; });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)),
@@ -1784,6 +2890,7 @@ static BOOL VaultCoveredByAppWindow(NSRect r, NSString *__autoreleasing *dominan
     [self reassertFrames];
     [self applyVaultFrames];
     [self applyMonitorFrames];
+    [self applyCreditsFrames];
 }
 
 #pragma mark - 菜单栏
@@ -1798,7 +2905,7 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
 // 两套外观标题一模一样、但各存各的档，所以必须是两个独立子菜单，不能共用一个
 - (NSMenu *)styleMenuForAction:(SEL)action title:(NSString *)title {
     NSMenu *m = [[NSMenu alloc] initWithTitle:title];
-    NSArray *names = @[@"实底卡（采样模糊）", @"羽化暗角", @"无底浮字", @"HUD 贴窗"];
+    NSArray *names = @[@"实底卡（采样模糊）", @"羽化暗角", @"无底浮字", @"无边玻璃"];
     for (NSInteger i = 0; i < (NSInteger)names.count; i++) {
         DeskAddAction(m, names[i], self, action).tag = i;
     }
@@ -1832,7 +2939,7 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
 
     NSMenu *menu = [NSMenu new];
 
-    // ---- 组件 1：卡片面板（油价 / 系统状态 / 问候）----
+    // ---- 组件 1：卡片面板（系统状态）----
     NSMenu *card = [[NSMenu alloc] initWithTitle:@"卡片面板"];
     _cardItem = DeskAddAction(card, @"显示 / 隐藏", self, @selector(toggleHidden:));
     [self addSubmenuTo:card title:@"外观"
@@ -1840,10 +2947,11 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
                                                          title:@"卡片外观"])];
     [card addItem:NSMenuItem.separatorItem];
     DeskAddAction(card, @"保存当前位置（拖完再点）", self, @selector(saveCurrentPlace:));
+    DeskAddAction(card, @"恢复默认位置（右上）", self, @selector(resetCardPlace:));
     [card addItem:NSMenuItem.separatorItem];
     _editItem = DeskAddAction(card, @"调角模式", self, @selector(toggleEditing:));
     DeskAddAction(card, @"复位角点", self, @selector(resetQuad:));
-    [self addSubmenuTo:menu title:@"卡片面板（油价 · 系统状态 · 问候）" menu:card];
+    [self addSubmenuTo:menu title:@"卡片面板（系统状态）" menu:card];
 
     // ---- 组件 2：弹药库 ARMORY（文件夹收纳）----
     NSMenu *vault = [[NSMenu alloc] initWithTitle:@"弹药库 ARMORY"];
@@ -1853,6 +2961,7 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
     [self addSubmenuTo:vault title:@"透明度" menu:[self vaultAlphaMenu]];
     [vault addItem:NSMenuItem.separatorItem];
     DeskAddAction(vault, @"选文件/文件夹入库…", self, @selector(pickItemsToIngest:));
+    DeskAddAction(vault, @"恢复默认位置（左下）", self, @selector(resetVaultPlace:));
     [vault addItem:NSMenuItem.separatorItem];
     _vaultEditItem = DeskAddAction(vault, @"调角模式", self, @selector(toggleVaultEditing:));
     DeskAddAction(vault, @"复位角点", self, @selector(resetVaultQuad:));
@@ -1863,6 +2972,7 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
     _monitorItem = DeskAddAction(mon, @"显示 / 隐藏", self, @selector(toggleMonitorHidden:));
     [self addSubmenuTo:mon title:@"外观"
                   menu:(_monitorStyleMenu = [self styleMenuForAction:@selector(chooseMonitorStyle:) title:@"活动监视器外观"])];
+    _monitorCompactItem = DeskAddAction(mon, @"简略模式", self, @selector(toggleMonitorCompact:));
     [mon addItem:NSMenuItem.separatorItem];
     [self addSubmenuTo:mon title:@"摆到（不用按住拖）"
                   menu:(_monitorCornerMenu = [self cornerMenuForTitle:@"摆到"
@@ -1889,6 +2999,7 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
         }
         [self addSubmenuTo:mon title:@"微调 20pt（不用按住拖）" menu:nudge];
     }
+    DeskAddAction(mon, @"恢复默认位置（右下）", self, @selector(resetMonitorPlace:));
     DeskAddAction(mon, @"自检：模拟拖 30pt（不用真鼠标）", self, @selector(selfTestMonitorDrag:));
     [mon addItem:NSMenuItem.separatorItem];
     _monitorEditItem = DeskAddAction(mon, @"调角模式", self, @selector(toggleMonitorEditing:));
@@ -1896,9 +3007,88 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
     DeskAddAction(mon, @"打开原生活动监视器", self, @selector(openActivityMonitor:));
     [self addSubmenuTo:menu title:@"活动监视器 ACTIVITY（CPU · 内存 · 能耗 · 网络）" menu:mon];
 
+    // ---- 组件 4：签到中心 CREDITS（四平台槽）----
+    NSMenu *cred = [[NSMenu alloc] initWithTitle:@"签到中心 CREDITS"];
+    _creditsStatusMenuItem = [[NSMenuItem alloc] initWithTitle:@"状态：—" action:NULL keyEquivalent:@""];
+    _creditsStatusMenuItem.enabled = NO;
+    [cred addItem:_creditsStatusMenuItem];
+    DeskAddAction(cred, @"立即签到（全部平台）", self, @selector(checkInAllNow:));
+    DeskAddAction(cred, @"立即检查（补签）", self, @selector(creditsCheckNowAll:));
+    [cred addItem:NSMenuItem.separatorItem];
+
+    // MiniMax：唯一已接入，浏览器独立 OAuth、自动续期
+    NSMenu *mm = [[NSMenu alloc] initWithTitle:@"MiniMax"];
+    _creditsMiniMaxInfoItem = [[NSMenuItem alloc] initWithTitle:@"余额 —" action:NULL keyEquivalent:@""];
+    _creditsMiniMaxInfoItem.enabled = NO;
+    [mm addItem:_creditsMiniMaxInfoItem];
+    _creditsCheckInItem = DeskAddAction(mm, @"立即签到", self, @selector(checkInNow:));
+    DeskAddAction(mm, @"立即刷新", self, @selector(refreshCreditsNow:));
+    _creditsAuthItem = DeskAddAction(mm, @"重新授权…", self, @selector(reauthorizeCredits:));
+    DeskAddAction(mm, @"打开 MiniMax Code 网页版", self, @selector(openMiniMaxWeb:));
+    _creditsMiniMaxMenuItem = [self addSubmenuTo:cred title:@"MiniMax · 未授权" menu:mm];
+
+    // Trae：只读本机 storage.json，刻意不自动续期（会踢 IDE）
+    NSMenu *trae = [[NSMenu alloc] initWithTitle:@"Trae"];
+    _creditsTraeInfoItem = [[NSMenuItem alloc] initWithTitle:@"余额 — · 登录态 —" action:NULL keyEquivalent:@""];
+    _creditsTraeInfoItem.enabled = NO;
+    [trae addItem:_creditsTraeInfoItem];
+    _creditsTraeCheckInItem = DeskAddAction(trae, @"立即签到", self, @selector(traeCheckInNow:));
+    DeskAddAction(trae, @"刷新额度", self, @selector(traeRefreshNow:));
+    DeskAddAction(trae, @"从本机重新读取登录态", self, @selector(traeReloadCredentials:));
+    DeskAddAction(trae, @"打开 Trae", self, @selector(openTraeApp:));
+    NSMenuItem *traeHint = [[NSMenuItem alloc] initWithTitle:@"只读 storage.json · 不自动续期（刷新会踢掉 IDE）"
+                                                     action:NULL keyEquivalent:@""];
+    traeHint.enabled = NO;
+    [trae addItem:traeHint];
+    _creditsTraeMenuItem = [self addSubmenuTo:cred title:@"Trae · 读取中" menu:trae];
+
+    // WorkBuddy：官方浏览器登录 + 每日签到（国内版有连签）
+    NSMenu *wb = [[NSMenu alloc] initWithTitle:@"WorkBuddy"];
+    _creditsWorkBuddyInfoItem = [[NSMenuItem alloc] initWithTitle:@"余额 — · 每日签到"
+                                                          action:NULL keyEquivalent:@""];
+    _creditsWorkBuddyInfoItem.enabled = NO;
+    [wb addItem:_creditsWorkBuddyInfoItem];
+    _creditsWorkBuddyLoginItem = DeskAddAction(wb, @"登录（浏览器）…", self, @selector(workbuddyLogin:));
+    _creditsWorkBuddyCheckInItem = DeskAddAction(wb, @"立即签到", self, @selector(workbuddyCheckInNow:));
+    DeskAddAction(wb, @"刷新额度", self, @selector(workbuddyRefreshNow:));
+    DeskAddAction(wb, @"从本机导入明文登录态", self, @selector(workbuddyImportLocal:));
+    DeskAddAction(wb, @"打开 WorkBuddy", self, @selector(openWorkbuddyApp:));
+    NSMenuItem *wbHint = [[NSMenuItem alloc] initWithTitle:@"5.6.2+ 客户端登录态已加密，优先浏览器登录"
+                                                   action:NULL keyEquivalent:@""];
+    wbHint.enabled = NO;
+    [wb addItem:wbHint];
+    _creditsWorkBuddyMenuItem = [self addSubmenuTo:cred title:@"WorkBuddy · 读取中" menu:wb];
+
+    // Qoder：PT → job token → 官方活动领取；国内版不需要设备风控
+    NSMenu *qoder = [[NSMenu alloc] initWithTitle:@"Qoder"];
+    _creditsQoderInfoItem = [[NSMenuItem alloc] initWithTitle:@"余额 — · 活动领取"
+                                                       action:NULL keyEquivalent:@""];
+    _creditsQoderInfoItem.enabled = NO;
+    [qoder addItem:_creditsQoderInfoItem];
+    _creditsQoderCheckInItem = DeskAddAction(qoder, @"立即领取", self, @selector(qoderCheckInNow:));
+    DeskAddAction(qoder, @"刷新额度", self, @selector(qoderRefreshNow:));
+    _creditsQoderTokenItem = DeskAddAction(qoder, @"设置 PT 令牌…", self, @selector(qoderSetToken:));
+    DeskAddAction(qoder, @"打开 Qoder 用量页", self, @selector(openQoderUsage:));
+    NSMenuItem *qHint = [[NSMenuItem alloc] initWithTitle:@"国内版无需设备 · 每天 10:00 刷新"
+                                                  action:NULL keyEquivalent:@""];
+    qHint.enabled = NO;
+    [qoder addItem:qHint];
+    _creditsQoderMenuItem = [self addSubmenuTo:cred title:@"Qoder · 读取中" menu:qoder];
+
+    [cred addItem:NSMenuItem.separatorItem];
+    _creditsItem = DeskAddAction(cred, @"显示 / 隐藏", self, @selector(toggleCreditsHidden:));
+    [self addSubmenuTo:cred title:@"外观"
+                  menu:(_creditsStyleMenu = [self styleMenuForAction:@selector(chooseCreditsStyle:)
+                                                                  title:@"签到外观"])];
+    DeskAddAction(cred, @"恢复默认位置（左上）", self, @selector(resetCreditsPlace:));
+    _creditsCenterMenuItem = [self addSubmenuTo:menu title:@"签到中心 CREDITS" menu:cred];
+    DeskLog(@"签到菜单：MiniMax（OAuth 自动续期）+ Trae（只读本机 storage.json）+ Qoder（PT → 官方活动接口）+ WorkBuddy（浏览器登录 → 签到接口）；每平台独立签到");
+
     [menu addItem:NSMenuItem.separatorItem];
 
     // ---- 全局 ----
+    _lockItem = DeskAddAction(menu, @"锁定位置（四块都不可拖动）", self, @selector(toggleLayoutLock:));
+    [menu addItem:NSMenuItem.separatorItem];
     DeskAddAction(menu, @"打开数据目录…", self, @selector(openDataDir:));
     NSMenuItem *quit = DeskAddAction(menu, @"退出 DeskBoard", self, @selector(quit:));
     quit.keyEquivalent = @"q";
@@ -1952,12 +3142,16 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
     }
     _cardItem.state = _hidden ? NSControlStateValueOff : NSControlStateValueOn;
     _editItem.state = _editing ? NSControlStateValueOn : NSControlStateValueOff;
+    _lockItem.state = _layoutLocked ? NSControlStateValueOn : NSControlStateValueOff;
+    _lockItem.title = _layoutLocked ? @"锁定位置（已锁：四块都不能拖）"
+                                    : @"锁定位置（四块都能拖）";
     _vaultItem.state = _vaultHidden ? NSControlStateValueOff : NSControlStateValueOn;
     _vaultEditItem.state = _vaultEditing ? NSControlStateValueOn : NSControlStateValueOff;
     for (NSMenuItem *it in _vaultStyleMenu.itemArray) {
         it.state = it.tag == _vaultStyle ? NSControlStateValueOn : NSControlStateValueOff;
     }
     _monitorItem.state = _monitorHidden ? NSControlStateValueOff : NSControlStateValueOn;
+    _monitorCompactItem.state = _monitorCompact ? NSControlStateValueOn : NSControlStateValueOff;
     _monitorEditItem.state = _monitorEditing ? NSControlStateValueOn : NSControlStateValueOff;
     if (_monitorCornerMenu) {
         NSInteger cur = [_monitorPlaces placeForScreen:NSScreen.mainScreen ?: NSScreen.screens.firstObject].corner;
@@ -1973,6 +3167,81 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
     for (NSMenuItem *it in _vaultAlphaMenu.itemArray) {
         it.state = it.tag == alphaPct ? NSControlStateValueOn : NSControlStateValueOff;
     }
+    _creditsItem.state = _creditsHidden ? NSControlStateValueOff : NSControlStateValueOn;
+    for (NSMenuItem *it in _creditsStyleMenu.itemArray) {
+        it.state = it.tag == _creditsStyle ? NSControlStateValueOn : NSControlStateValueOff;
+    }
+    if (_credits) {
+        DeskCreditsCenterSnapshot *cc = _creditsCenter
+            ?: [DeskCreditsCenterSnapshot centerWithMiniMax:_credits.snapshot
+                                                       trae:_trae.snapshot
+                                                      qoder:_qoder.snapshot
+                                                  workbuddy:_workbuddy.snapshot];
+        DeskCreditsSnapshot *cs = _credits.snapshot;
+        _creditsCenterMenuItem.title = [NSString stringWithFormat:@"签到中心 CREDITS（%ld/4 已接入）",
+                                        (long)cc.connectedCount];
+        _creditsStatusMenuItem.title = [NSString stringWithFormat:@"状态：%@",
+                                        [self creditsSummaryTextForCenter:cc]];
+        _creditsMiniMaxMenuItem.title = [NSString stringWithFormat:@"MiniMax · %@",
+                                         [self creditsMiniMaxHeadline]];
+        _creditsTraeMenuItem.title = [self creditsMenuTitleForSlot:
+                                      [cc slotForPlatform:DeskCreditsPlatformTrae]];
+        DeskTraeSnapshot *tr = _trae.snapshot;
+        NSString *traeBal = tr.balance >= 0
+            ? [NSString stringWithFormat:@"余额 %@ 积分", DeskCreditsFormatPoints(tr.balance)]
+            : @"余额 —";
+        NSString *traeLife = tr.tokenExpiresAt > 0
+            ? [NSString stringWithFormat:@"登录态 %.0f 天", MAX(0.0, tr.loginDays)]
+            : @"登录态 —";
+        _creditsTraeInfoItem.title = [NSString stringWithFormat:@"%@ · %@", traeBal, traeLife];
+        _creditsTraeCheckInItem.title = tr.checkedIn ? @"立即签到（今日已签）" : @"立即签到";
+        _creditsTraeCheckInItem.enabled = tr.connected
+            && tr.phase != DeskTraePhaseNeedsAuth && tr.hasStatus && tr.enabled
+            && !tr.checkedIn && !tr.claiming;
+        _creditsWorkBuddyMenuItem.title = [self creditsMenuTitleForSlot:
+                                           [cc slotForPlatform:DeskCreditsPlatformWorkBuddy]];
+        DeskWorkbuddySnapshot *wr = _workbuddy.snapshot;
+        NSString *wBal = wr.balance >= 0
+            ? [NSString stringWithFormat:@"余额 %@ 积分", DeskCreditsFormatPoints(wr.balance)]
+            : @"余额 —";
+        NSString *wState = wr.checkedIn ? @"今日已签"
+            : (wr.hasStatus && wr.activityEnabled ? @"今日待签"
+               : (wr.hasStatus ? @"无签到活动" : @"未同步"));
+        if (!wr.hasToken) wState = @"未登录";
+        else if (wr.tokenExpired) wState = @"登录过期";
+        _creditsWorkBuddyInfoItem.title = [NSString stringWithFormat:@"%@ · %@ · 连签 %.0f 天",
+                                           wBal, wState, wr.streakDays];
+        _creditsWorkBuddyCheckInItem.title = wr.checkedIn ? @"立即签到（今日已签）" : @"立即签到";
+        _creditsWorkBuddyCheckInItem.enabled = wr.hasToken && !wr.tokenExpired
+            && wr.hasStatus && wr.activityEnabled && !wr.checkedIn && !wr.claiming;
+        _creditsWorkBuddyLoginItem.title = wr.hasToken ? @"重新登录（浏览器）…" : @"登录（浏览器）…";
+        _creditsWorkBuddyLoginItem.enabled = !wr.authorizing;
+        _creditsQoderMenuItem.title = [self creditsMenuTitleForSlot:
+                                       [cc slotForPlatform:DeskCreditsPlatformQoder]];
+        DeskQoderSnapshot *qr = _qoder.snapshot;
+        NSString *qBal = qr.balance >= 0
+            ? [NSString stringWithFormat:@"余额 %@ Credits", DeskCreditsFormatPoints(qr.balance)]
+            : @"余额 —";
+        NSString *qState = qr.claimed ? @"本窗口已领"
+            : (qr.claimable ? @"待领" : (qr.hasStatus ? @"无活动" : @"未同步"));
+        if (!qr.hasToken) qState = @"未设置 PT";
+        else if (qr.tokenInvalid) qState = @"PT 失效";
+        _creditsQoderInfoItem.title = [NSString stringWithFormat:@"%@ · %@", qBal, qState];
+        _creditsQoderCheckInItem.title = qr.claimed ? @"立即领取（本窗口已领）" : @"立即领取";
+        _creditsQoderCheckInItem.enabled = qr.hasToken && !qr.tokenInvalid
+            && qr.claimable && !qr.claiming;
+        _creditsQoderTokenItem.title = qr.hasToken ? @"更换 PT 令牌…" : @"设置 PT 令牌…";
+        NSString *bal = cs.authorized
+            ? [NSString stringWithFormat:@"余额 %@ 积分", DeskCreditsFormatPoints(cs.balance)]
+            : @"余额 —";
+        _creditsMiniMaxInfoItem.title = [NSString stringWithFormat:@"%@ · %@", bal,
+                                         DeskCreditsCycleText(cs)];
+        _creditsCheckInItem.title = cs.todayChecked ? @"立即签到（今日已签）" : @"立即签到";
+        _creditsCheckInItem.enabled = cs.authorized && !cs.needsAuth
+            && !cs.todayChecked && !cs.claiming && !cs.authorizing;
+        _creditsAuthItem.title = cs.authorizing ? @"等待浏览器授权…" : @"重新授权…";
+        _creditsAuthItem.enabled = !cs.authorizing;
+    }
 }
 
 - (void)chooseVaultStyle:(id)sender {
@@ -1980,6 +3249,7 @@ static NSMenuItem *DeskAddAction(NSMenu *menu, NSString *title, id target, SEL a
     for (NSWindow *w in _vaultWindows) {
         NSView *v = w.contentView;
         if ([v isKindOfClass:[DeskVaultView class]]) ((DeskVaultView *)v).style = (DeskStyle)_vaultStyle;
+        w.hasShadow = (DeskStyle)_vaultStyle != DeskStyleHUD;
     }
     [self saveConfig];
     [self syncMenu];

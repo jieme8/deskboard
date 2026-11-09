@@ -1,4 +1,4 @@
-// 过去 12 小时的历史桶：把每 5 秒一拍的读数按分钟攒下来，落盘，再按窗口求平均。
+// 过去 12 小时的历史桶：把每 10 秒一拍的读数按分钟攒下来，落盘，再按窗口求平均。
 // 为什么要自己攒 —— macOS 没有任何公开 API 能给"过去 12 小时"的任意指标：
 // getloadavg 只到 15 分钟，host_cpu_load_info 和网卡计数都是"自开机累计"，
 // 而这台机器已经开机 138 小时，since-boot 不等于 12h。
@@ -10,7 +10,7 @@ typedef NS_ENUM(NSInteger, DeskHistMetric) {
     DeskHistCPU = 0,     // %CPU
     DeskHistMemory,      // 常驻字节
     DeskHistEnergy,      // 自算能耗影响（和界面同一套估算）
-    DeskHistNetwork,     // 活跃 socket 数
+    DeskHistNetwork,     // 网络收发速率（字节/秒，收+发；v2 起不再是连接数）
     DeskHistMetricCount
 };
 
@@ -41,6 +41,18 @@ extern const double kDeskHistoryWindow;
 - (double)averageForSystemMetric:(DeskHistMetric)m
                              now:(NSTimeInterval)now window:(double)window
                          covered:(double *)coveredOut;
+
+// 窗口内的累计量（网络用：字节总量，不是平均速率）。coveredOut 同上。
+- (double)totalForPid:(pid_t)pid metric:(DeskHistMetric)m
+                  now:(NSTimeInterval)now window:(double)window
+              covered:(double *)coveredOut;
+- (double)totalForSystemMetric:(DeskHistMetric)m
+                           now:(NSTimeInterval)now window:(double)window
+                       covered:(double *)coveredOut;
+// 所有已跟踪进程的窗口累计之和（网络榜头用；不碰网卡计数器，不受回绕污染）
+- (double)totalForTrackedPidsMetric:(DeskHistMetric)m
+                                now:(NSTimeInterval)now window:(double)window
+                            covered:(double *)coveredOut;
 
 // 攒脏了才写。落盘频率是"每分钟一次"而不是"每拍一次"，就是为了别为这点事抢 CPU
 - (BOOL)flushIfNeeded;

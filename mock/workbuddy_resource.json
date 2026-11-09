@@ -1,0 +1,4 @@
+{"code":0,"msg":"OK","data":{"Response":{"Data":{"Accounts":[
+  {"PackageName":"活动赠送","CapacitySizePrecise":500,"CapacityUsedPrecise":100,"CapacityRemainPrecise":400,"DeductionEndTime":4102444800000},
+  {"PackageName":"月度循环","CycleCapacitySizePrecise":2000,"CycleCapacityUsedPrecise":500,"CycleCapacityRemainPrecise":1500,"CycleEndTime":1795660000000,"DeductionEndTime":1798252000000}
+]}}}}

@@ -26,26 +26,15 @@ static DeskStatRow *MakeStatRow(NSString *label, NSString *value, double fractio
     return [[DeskStatRow alloc] initWithLabel:label value:value fraction:fraction];
 }
 
-static NSString *PercentText(double v) {
-    return v < 0 ? @"—" : [NSString stringWithFormat:@"%.0f%%", v];
-}
-
-// 内存按 GiB 显示（和"关于本机"里的内存容量口径一致），磁盘与速率按十进制
-// （和"存储空间"一致），两套口径是系统自己的显示习惯，统一成一个反而会和你看到的数字对不上。
-static NSString *GiBText(double bytes, int digits) {
-    return [NSString stringWithFormat:@"%.*f", digits, bytes / (1024.0 * 1024.0 * 1024.0)];
-}
-
+// 磁盘与速率按十进制（和"存储空间"一致）。
 static NSString *GBText(double bytes, int digits) {
     return [NSString stringWithFormat:@"%.*f", digits, bytes / 1e9];
 }
 
-static NSString *RateText(double bytesPerSec) {
-    if (bytesPerSec < 0) return @"—";
-    double m = bytesPerSec / 1e6;
-    if (m >= 10) return [NSString stringWithFormat:@"%.0fM", m];
-    if (m >= 1) return [NSString stringWithFormat:@"%.1fM", m];
-    return [NSString stringWithFormat:@"%.0fK", bytesPerSec / 1e3];
+// 交换量按十进制 G/M，和内存/磁盘同一套习惯，不用 GiB。
+static NSString *SwapSizeText(double bytes) {
+    if (bytes >= 1e9) return [NSString stringWithFormat:@"%.1fG", bytes / 1e9];
+    return [NSString stringWithFormat:@"%.0fM", MAX(0.0, bytes) / 1e6];
 }
 
 static NSString *DaysText(NSNumber *daysLeft) {
@@ -115,9 +104,8 @@ static NSString *DaysText(NSNumber *daysLeft) {
     NSString *days = DaysText(NumField(dict, @"daysLeft"));
     NSString *pending = StrField(dict, @"pendingWindow");
     NSMutableArray *info = [NSMutableArray array];
-    // 油价区只有 150pt 宽（panel_view.m 的 kOilW），说明行是画上去的、不折行不截断，
-    // 三个事实一起上会溢出到分隔线右边去。所以"上期待发布"出现时让位：
-    // 时间和倒计时都不画，只留日期 + 这一句最该让人看见的话。
+    // 说明行已经不上屏（卡片只剩系统状态），但这条数据还在；仍按"一行说得清"的口径拼，
+    // 避免三个事实挤成一长句。上期待发布时让位：时间和倒计时都不留，只留日期 + 最该看见的话。
     if (pending.length && nextDate.length) {
         [info addObject:nextDate];
         [info addObject:@"上期待发布"];
@@ -148,23 +136,25 @@ static NSString *DaysText(NSNumber *daysLeft) {
 + (NSArray<DeskStatRow *> *)statRowsForStats:(DeskStats *)stats {
     if (!stats) return @[];
     NSMutableArray<DeskStatRow *> *rows = [NSMutableArray array];
-    [rows addObject:MakeStatRow(@"CPU", PercentText(stats.cpu),
-                               stats.cpu < 0 ? -1 : stats.cpu / 100.0)];
-    [rows addObject:MakeStatRow(@"GPU", PercentText(stats.gpu),
-                               stats.gpu < 0 ? -1 : stats.gpu / 100.0)];
-    NSString *temp = stats.cpuTemp <= 0 ? @"—" : [NSString stringWithFormat:@"%.1f°C", stats.cpuTemp];
-    [rows addObject:MakeStatRow(@"温度", temp, stats.cpuTemp <= 0 ? -1 : MIN(stats.cpuTemp / 100.0, 1.0))];
-
-    NSString *rate = (stats.netRecv < 0 || stats.netSend < 0)
-        ? @"—"
-        : [NSString stringWithFormat:@"↓%@ ↑%@", RateText(stats.netRecv), RateText(stats.netSend)];
-    [rows addObject:MakeStatRow(@"网速", rate, -1)];
-
-    double memFrac = stats.memFraction;
-    NSString *mem = memFrac < 0 ? @"—"
-        : [NSString stringWithFormat:@"%.0f%% · %@/%@G", memFrac * 100.0,
-           GiBText(stats.memUsed, 1), GiBText(stats.memTotal, 0)];
-    [rows addObject:MakeStatRow(@"内存", mem, memFrac)];
+    NSString *temp;
+    // 温度条和状态词取 CPU / SSD 里更高的那个，不然会出现"条子还在正常段、
+    // 状态却说偏高"的自相矛盾。两个都读不到才留 -1。
+    double hotTemp = -1;
+    if (stats.cpuTemp > 0) hotTemp = stats.cpuTemp;
+    if (stats.ssdTemp > 0) hotTemp = MAX(hotTemp, stats.ssdTemp);
+    double tempFrac = hotTemp > 0 ? MIN(hotTemp / 100.0, 1.0) : -1;
+    if (stats.cpuTemp > 0) {
+        temp = [NSString stringWithFormat:@"CPU %.1f°C", stats.cpuTemp];
+    } else {
+        temp = @"—";
+    }
+    // 两个温度必须各自带名，光印一个裸数字看不出是 CPU 还是 SSD。
+    if (stats.ssdTemp > 0) {
+        temp = stats.cpuTemp > 0
+            ? [NSString stringWithFormat:@"CPU %.1f°C · SSD %.0f°C", stats.cpuTemp, stats.ssdTemp]
+            : [NSString stringWithFormat:@"SSD %.0f°C", stats.ssdTemp];
+    }
+    [rows addObject:MakeStatRow(@"温度", temp, tempFrac)];
 
     double diskFrac = stats.diskFraction;
     NSString *disk = diskFrac < 0 ? @"—"
@@ -182,7 +172,39 @@ static NSString *DaysText(NSNumber *daysLeft) {
 - (void)updateStats:(DeskStats *)stats {
     self.stats = stats;
     self.statRows = [DeskModel statRowsForStats:stats];
-    self.statsHeader = self.statRows.count ? @"系统状态" : nil;
+}
+
+// 表尾左格。句式跟原生电源菜单一致：交流电/充电中/剩余 x:xx。
+// 分钟为 0 或 -1 时不硬编时间，免得出现"剩余 0:00"。
++ (NSString *)batteryStatusTextForStats:(DeskStats *)stats {
+    if (!stats || stats.batteryPercent < 0) return @"—";
+    NSString *pct = [NSString stringWithFormat:@"%.0f%%",
+                     MIN(100.0, MAX(0.0, stats.batteryPercent))];
+    if (!stats.batteryOnAC) {
+        if (stats.batteryMinutes > 0) {
+            NSInteger h = stats.batteryMinutes / 60;
+            NSInteger m = stats.batteryMinutes % 60;
+            NSString *left = h > 0
+                ? [NSString stringWithFormat:@"%ld:%02ld", (long)h, (long)m]
+                : [NSString stringWithFormat:@"%ld 分", (long)m];
+            return [NSString stringWithFormat:@"%@ · 剩余 %@", pct, left];
+        }
+        return [NSString stringWithFormat:@"%@ · 电池供电", pct];
+    }
+    if (stats.batteryCharging) return [NSString stringWithFormat:@"%@ · 充电中", pct];
+    return [NSString stringWithFormat:@"%@ · 交流电", pct];
+}
+
+// 表尾右格之一：只印已用交换量，单位写出来。总量不塞进窄格，留给以后需要时再谈。
++ (NSString *)swapTextForStats:(DeskStats *)stats {
+    if (!stats || stats.swapUsed < 0 || stats.swapTotal <= 0) return @"—";
+    return SwapSizeText(stats.swapUsed);
+}
+
+// 表尾右格之二：1 分钟负载；三个负载值放不进 196pt 的格宽。
++ (NSString *)loadTextForStats:(DeskStats *)stats {
+    if (!stats || stats.load1 < 0) return @"—";
+    return [NSString stringWithFormat:@"%.2f", stats.load1];
 }
 
 @end

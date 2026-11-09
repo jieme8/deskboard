@@ -1,6 +1,7 @@
 // 分钟桶历史。见 history.h 顶部那段"为什么要自己攒"。
 #import "history.h"
 #import "procs.h"
+#include <math.h>
 
 const double kDeskHistoryWindow = 12.0 * 3600.0;
 
@@ -12,6 +13,9 @@ const double kDeskHistoryWindow = 12.0 * 3600.0;
 static const NSUInteger kMaxTrackedPids = 40;
 // 桶宽 60 秒。再细对"12 小时平均"没有信息增益，只会把文件撑大
 static const NSTimeInterval kBucketSeconds = 60.0;
+// 一个 60 秒桶的正常网络字节上限（100 GB/min ≈ 13 Gbps）。超过它只可能是
+// 计数器回绕/接口重连留下的脏样本；读回时按该桶的进程值修复，别让 12h 累计被带飞。
+static const double kMaxNetBytesPerBucket = 1e11;
 
 @interface DeskHistory () {
     NSString *_path;
@@ -20,7 +24,16 @@ static const NSTimeInterval kBucketSeconds = 60.0;
     NSTimeInterval _lastAt;
     BOOL _dirty;
     NSTimeInterval _lastFlush;
+    // 12h 窗口聚合缓存：组件每拍要问 16 行 × 4 榜 = 64 次，逐次重扫 720 个桶
+    // 实测占刷新主线程的七成。noteSampleAt 写脏；同一拍里的 64 次只扫一遍。
+    BOOL _winValid;
+    NSTimeInterval _winAt;
+    double _winWindow;
+    double _winCovered;
+    double _winSys[DeskHistMetricCount];
+    NSMutableDictionary<NSString *, NSMutableArray *> *_winPid;
 }
+- (void)buildWindowCacheAt:(NSTimeInterval)now window:(double)window;
 @end
 
 @implementation DeskHistory
@@ -53,6 +66,12 @@ static const NSTimeInterval kBucketSeconds = 60.0;
     NSError *err = nil;
     id obj = [NSPropertyListSerialization propertyListWithData:d options:0 format:NULL error:&err];
     if (![obj isKindOfClass:NSDictionary.class]) { _dirty = YES; return YES; }  // 坏了就当没有，重写一份
+    // v1 的 network 桶存的是 socket 数，v2 换成字节/秒；v3 的能耗是 "CPU% + 唤醒×0.08"
+    // 的估算分，v4 换成内核 ri_energy_nj 实测瓦数。量纲不同的旧桶不能混用，
+    // 否则升级后 12h 能耗平均会拿"几十点的估算分"当"零点几瓦"。
+    NSNumber *ver = [(NSDictionary *)obj objectForKey:@"v"];
+    NSInteger version = [ver isKindOfClass:NSNumber.class] ? ver.integerValue : 0;
+    if (version != 4) { _dirty = YES; return YES; }
     NSTimeInterval floor0 = [NSDate date].timeIntervalSince1970 - kDeskHistoryWindow - kBucketSeconds * 2;
     long long floorBucket = (long long)floor(floor0 / kBucketSeconds);
     for (NSString *ks in [(NSDictionary *)obj objectForKey:@"b"]) {
@@ -67,6 +86,24 @@ static const NSTimeInterval kBucketSeconds = 60.0;
         NSMutableDictionary *pm = [NSMutableDictionary dictionary];
         for (NSString *pk in bm[@"p"]) pm[pk] = [bm[@"p"][pk] mutableCopy];
         bm[@"p"] = pm;
+        // v2 里可能残留计数器回绕导致的超大网络桶：用该桶进程累计重算，
+        // 至少是干净的下界；不修的话 12h 合计会是一个 1e20 量级的假数。
+        NSArray *sys = bm[@"sys"];
+        if (sys.count > DeskHistNetwork) {
+            double net = [sys[DeskHistNetwork] doubleValue];
+            if (net < 0 || net > kMaxNetBytesPerBucket) {
+                double repaired = 0;
+                NSUInteger netIdx = (NSUInteger)DeskHistNetwork + 1;   // e = [秒, CPU, 内存, 能耗, 网络]
+                for (NSString *pk in pm) {
+                    NSArray *e = pm[pk];
+                    if (e.count > netIdx) repaired += [e[netIdx] doubleValue];
+                }
+                NSMutableArray *fixed = [sys mutableCopy];
+                fixed[DeskHistNetwork] = @(MAX(0.0, repaired));
+                bm[@"sys"] = fixed;
+                _dirty = YES;
+            }
+        }
         _buckets[@(no)] = bm;
     }
     return YES;
@@ -79,7 +116,7 @@ static const NSTimeInterval kBucketSeconds = 60.0;
     _lastFlush = now;
     NSMutableDictionary *out = [NSMutableDictionary dictionary];
     for (NSNumber *k in _buckets) out[k.stringValue] = _buckets[k];
-    NSData *d = [NSPropertyListSerialization dataWithPropertyList:@{ @"v": @1, @"b": out }
+    NSData *d = [NSPropertyListSerialization dataWithPropertyList:@{ @"v": @4, @"b": out }
                                                           format:NSPropertyListBinaryFormat_v1_0
                                                          options:0 error:NULL];
     if (!d) return NO;
@@ -101,7 +138,8 @@ static NSSet<NSNumber *> *leaders(NSArray<DeskProc *> *rows) {
     pid_t ids[4][kTrackTopPerMetric]; double keys[4][kTrackTopPerMetric]; NSInteger cnt[4] = { 0, 0, 0, 0 };
     for (DeskProc *p in rows) {
         if (p.cpu < 0) continue;                 // 没基线的一拍不参与排名
-        double v[4] = { p.cpu, p.mem, p.energy, (double)MAX(0, p.sockets) };
+        double netRate = (p.netInRate >= 0 && p.netOutRate >= 0) ? p.netInRate + p.netOutRate : -1;
+        double v[4] = { p.cpu, p.mem, p.energy, netRate };
         for (int m = 0; m < 4; m++) {
             if (v[m] < 0) continue;
             int at = cnt[m] < kTrackTopPerMetric ? cnt[m] : kTrackTopPerMetric;
@@ -143,9 +181,10 @@ static NSSet<NSNumber *> *leaders(NSArray<DeskProc *> *rows) {
         if (![keep containsObject:@(proc.pid)]) continue;
         // 负数 = 这一拍还不知道（刚启动那一拍没有基线）。整条跳过，连秒数都不记 ——
         // 拿 MAX(0,...) 把"不知道"糊成 0，平均值就会被假 0 拉低，而且拉得看不出来
-        if (proc.cpu < 0 || proc.energy < 0 || proc.wakeups < 0) continue;
-        double vals[4] = { proc.cpu, proc.mem, proc.cpu + proc.wakeups * 0.08,
-                          (double)MAX(0, proc.sockets) };
+        if (proc.cpu < 0 || proc.energy < 0 || proc.wakeups < 0 ||
+            proc.netInRate < 0 || proc.netOutRate < 0) continue;
+        double vals[4] = { proc.cpu, proc.mem, proc.energy,
+                          proc.netInRate + proc.netOutRate };
         // mutableCopy 而不是直接取：桶可能来自刚读回的 plist，那条路上是不可变数组
         NSMutableArray *e = [p[@(proc.pid).stringValue] mutableCopy];
         if (!e) e = [@[@0.0, @0.0, @0.0, @0.0, @0.0] mutableCopy];
@@ -159,7 +198,23 @@ static NSSet<NSNumber *> *leaders(NSArray<DeskProc *> *rows) {
     NSMutableArray *stale = [NSMutableArray array];
     for (NSNumber *k in _buckets) if (k.longLongValue < floorBucket) [stale addObject:k];
     [_buckets removeObjectsForKeys:stale];
+    _winValid = NO;   // 这一拍的数据变了，下一次查询重扫一遍窗口
     _dirty = YES;
+}
+
+// 一次扫描出整个窗口的进程累计 + 系统累计 + covered，缓存一拍。
+// now 只用来定桶范围；同一拍内 64 次调用传进来的 now 只差几毫秒，不能各扫一遍。
+- (void)buildWindowCacheAt:(NSTimeInterval)now window:(double)window {
+    if (_winValid && _winWindow == window && fabs(now - _winAt) < 1.0) return;
+    double sys[DeskHistMetricCount] = { 0, 0, 0, 0 };
+    NSMutableDictionary<NSString *, NSMutableArray *> *acc = nil;
+    [self sumOverWindowEndingAt:now window:window into:sys perPid:&acc];
+    _winPid = acc ?: [NSMutableDictionary dictionary];
+    for (NSInteger m = 0; m < DeskHistMetricCount; m++) _winSys[m] = sys[m];
+    _winCovered = [self recordedSecondsEndingAt:now window:window];
+    _winAt = now;
+    _winWindow = window;
+    _winValid = YES;
 }
 
 #pragma mark - 查
@@ -210,27 +265,50 @@ static double histDenominator(double window, double recorded) {
 
 - (double)averageForSystemMetric:(DeskHistMetric)m now:(NSTimeInterval)now window:(double)window
                          covered:(double *)coveredOut {
-    long long last = (long long)floor(now / kBucketSeconds), first = (long long)floor((now - window) / kBucketSeconds);
-    double sum = 0;
-    for (long long no = first; no <= last; no++) {
-        NSMutableDictionary *b = _buckets[@(no)];
-        if (b) sum += [b[@"sys"][m] doubleValue];
-    }
-    double rec = [self recordedSecondsEndingAt:now window:window];
-    if (coveredOut) *coveredOut = rec;
-    double den = histDenominator(window, rec);
-    return den > 0 ? sum / den : 0;
+    [self buildWindowCacheAt:now window:window];
+    if (coveredOut) *coveredOut = _winCovered;
+    double den = histDenominator(window, _winCovered);
+    return den > 0 ? _winSys[m] / den : 0;
 }
 
 - (double)averageForPid:(pid_t)pid metric:(DeskHistMetric)m now:(NSTimeInterval)now window:(double)window
                 covered:(double *)coveredOut {
-    NSMutableDictionary<NSString *, NSMutableArray *> *acc = nil;
-    [self sumOverWindowEndingAt:now window:window into:NULL perPid:&acc];
-    NSMutableArray *e = acc[@(pid).stringValue];
+    [self buildWindowCacheAt:now window:window];
+    NSMutableArray *e = _winPid[@(pid).stringValue];
     if (!e) { if (coveredOut) *coveredOut = 0; return 0; }
-    if (coveredOut) *coveredOut = [self recordedSecondsEndingAt:now window:window];
-    double den = histDenominator(window, [self recordedSecondsEndingAt:now window:window]);
+    if (coveredOut) *coveredOut = _winCovered;
+    double den = histDenominator(window, _winCovered);
     return den > 0 ? [e[(NSInteger)m + 1] doubleValue] / den : 0;
+}
+
+// 窗口内的原始累计量。网络桶存的是 rate×dt（字节），所以这里不再除秒数。
+- (double)totalForPid:(pid_t)pid metric:(DeskHistMetric)m now:(NSTimeInterval)now window:(double)window
+              covered:(double *)coveredOut {
+    [self buildWindowCacheAt:now window:window];
+    NSMutableArray *e = _winPid[@(pid).stringValue];
+    if (!e) { if (coveredOut) *coveredOut = 0; return 0; }
+    if (coveredOut) *coveredOut = _winCovered;
+    return [e[(NSInteger)m + 1] doubleValue];
+}
+
+- (double)totalForSystemMetric:(DeskHistMetric)m now:(NSTimeInterval)now window:(double)window
+                       covered:(double *)coveredOut {
+    [self buildWindowCacheAt:now window:window];
+    if (coveredOut) *coveredOut = _winCovered;
+    return _winSys[m];
+}
+
+- (double)totalForTrackedPidsMetric:(DeskHistMetric)m now:(NSTimeInterval)now window:(double)window
+                            covered:(double *)coveredOut {
+    [self buildWindowCacheAt:now window:window];
+    double sum = 0;
+    NSUInteger idx = (NSUInteger)m + 1;   // e = [秒, CPU, 内存, 能耗, 网络]
+    for (NSString *pid in _winPid) {
+        NSArray *e = _winPid[pid];
+        if (e.count > idx) sum += [e[idx] doubleValue];
+    }
+    if (coveredOut) *coveredOut = _winCovered;
+    return sum;
 }
 
 @end

@@ -81,11 +81,27 @@ static NSArray<NSDictionary *> *WindowsOf(CFArrayRef list, NSString *owner) {
 static NSArray<NSDictionary *> *WaitForWindows(NSString *owner, NSUInteger expected, NSTimeInterval timeout) {
     NSArray<NSDictionary *> *mine = @[];
     NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
+    NSString *lastSig = nil;
+    NSDate *stableSince = nil;
     while ([[NSDate date] compare:deadline] == NSOrderedAscending) {
         CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionAll, kCGNullWindowID);
         mine = WindowsOf(list, owner);
         CFRelease(list);
-        if (expected == 0 ? mine.count > 0 : mine.count == expected) return mine;
+        // 四块组件不是同时建窗：等窗口集合稳定 0.6 秒再返回。
+        // 只等"至少 N 个"会在第一块刚出现时就抓快照，后面的组件全被漏掉。
+        NSMutableArray<NSString *> *parts = [NSMutableArray array];
+        for (NSDictionary *d in mine) {
+            NSRect r = RectOf(d[@"kCGWindowBounds"]);
+            [parts addObject:[NSString stringWithFormat:@"%.0fx%.0f", r.size.width, r.size.height]];
+        }
+        NSString *sig = [parts componentsJoinedByString:@"|"];
+        if (![sig isEqualToString:lastSig ?: @""]) {
+            lastSig = sig;
+            stableSince = [NSDate date];
+        }
+        BOOL enough = mine.count >= MAX(expected, (NSUInteger)1);
+        if (enough && stableSince
+            && [[NSDate date] timeIntervalSinceDate:stableSince] >= 0.6) return mine;
         [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.25]];
     }
     return mine;
@@ -105,7 +121,8 @@ int main(int argc, const char *argv[]) {
                 NSDictionary *d = (__bridge NSDictionary *)CFArrayGetValueAtIndex(all, i);
                 if (![d[@"kCGWindowOwnerName"] isEqualToString:owner]) continue;
                 NSRect b = RectOf(d[@"kCGWindowBounds"]);
-                printf("  layer=%-12ld alpha=%.2f bounds=(%.0f, %.0f) %.0fx%.0f onscreen=%d\n",
+                printf("  id=%-8d layer=%-12ld alpha=%.2f bounds=(%.0f, %.0f) %.0fx%.0f onscreen=%d\n",
+                       [d[@"kCGWindowNumber"] intValue],
                        (long)[d[@"kCGWindowLayer"] integerValue],
                        [d[@"kCGWindowAlpha"] doubleValue], b.origin.x, b.origin.y,
                        b.size.width, b.size.height, [d[@"kCGWindowIsOnscreen"] boolValue]);
@@ -118,11 +135,16 @@ int main(int argc, const char *argv[]) {
         Say(screens.count > 0, @"检出 %lu 块屏幕", (unsigned long)screens.count);
         CGFloat mainH = screens.firstObject.frame.size.height;
         // 位置存档按"屏 × 分辨率"分档，期望位置要跟窗口所在的那块屏对齐
-        DeskPlaceStore *store = [[DeskPlaceStore alloc] initWithDictionary:PrefDict(@"DeskBoardPlaces")];
-        DeskPlaceStore *vstore = [[DeskPlaceStore alloc] initWithDictionary:PrefDict(@"DeskBoardVaultPlaces")];
-        DeskPlaceStore *mstore = [[DeskPlaceStore alloc] initWithDictionary:PrefDict(@"DeskBoardMonitorPlaces")];
-        printf("配置：位置存档 卡片 %lu 档 / 弹药库 %lu 档（按屏 × 点分辨率分键）\n",
-               (unsigned long)store.count, (unsigned long)vstore.count);
+        DeskPlaceStore *store = [[DeskPlaceStore alloc] initWithDictionary:PrefDict(@"DeskBoardPlaces")
+                                                              defaultPlace:DeskPlaceDefaultForKind(DeskPlaceKindPanel)];
+        DeskPlaceStore *vstore = [[DeskPlaceStore alloc] initWithDictionary:PrefDict(@"DeskBoardVaultPlaces")
+                                                               defaultPlace:DeskPlaceDefaultForKind(DeskPlaceKindVault)];
+        DeskPlaceStore *mstore = [[DeskPlaceStore alloc] initWithDictionary:PrefDict(@"DeskBoardMonitorPlaces")
+                                                               defaultPlace:DeskPlaceDefaultForKind(DeskPlaceKindMonitor)];
+        DeskPlaceStore *cstore = [[DeskPlaceStore alloc] initWithDictionary:PrefDict(@"DeskBoardCreditsPlaces")
+                                                               defaultPlace:DeskPlaceDefaultForKind(DeskPlaceKindCredits)];
+        printf("配置：位置存档 卡片 %lu 档 / 弹药库 %lu 档 / 签到 %lu 档（按屏 × 点分辨率分键）\n",
+               (unsigned long)store.count, (unsigned long)vstore.count, (unsigned long)cstore.count);
 
         NSArray<NSDictionary *> *mine;
         if (expectHidden) {
@@ -157,11 +179,13 @@ int main(int argc, const char *argv[]) {
         }
 
         // 变形时 App 会养一个从不上屏的离屏素材窗（_sourceHost），它不是第二张卡片；
-        // 坐标胶囊窗口是上屏的，但它比卡片窄得多，同样不算组件本体
+        // 坐标胶囊（300×26）矮、悬停气泡（240×192）窄，最小那块组件也有 272 宽，按尺寸排除。
         NSMutableArray *shown = [NSMutableArray array], *hidden = [NSMutableArray array];
         for (NSDictionary *d in mine) {
             NSRect r = RectOf(d[@"kCGWindowBounds"]);
-            if (r.size.width < 400) continue;
+            // 坐标胶囊 300×26、悬停气泡 240×192；签到中心删掉抬头/表尾后只有 132 高，
+            // 高度门槛必须低于它，否则真窗口会被当成气泡滤掉。
+            if (r.size.width < 260 || r.size.height < 100) continue;
             [([d[@"kCGWindowIsOnscreen"] boolValue] ? shown : hidden) addObject:d];
         }
         if (hidden.count) {
@@ -175,25 +199,15 @@ int main(int argc, const char *argv[]) {
             return 1;
         }
 
-        // 现在桌上有两组窗口：油价卡片（宽 480 或变形时 600）和弹药库（宽 432）。
-        // 断言得按组分开跑，否则弹药库会被当成"多出来的第二张卡片"，
-        // 拿卡片的位置存档去比它，怎么算都不对。
-        // 调角时窗口会从本体各边撑出 60pt 余量（432→552 / 480→600），
-        // 分类必须认这两档，只按 432 判会把变形后的弹药库误当成第二张卡片
-        const double kWidgetW = 432.0, kWidgetH = 294.0;
-        const double kVaultPad = 60.0;
-
-        // 432 宽的桌面层窗口现在有两块：弹药库和活动监视器，本体尺寸一模一样。
-        // 原来按宽度分桶，第三块组件一进来就认错 —— 把活动监视器当弹药库，
-        // 再拿弹药库的存档去比它，凭空报出几百点偏差的假失败。
-        // 现在先按"哪一份位置存档对得上"分类，再各自跑同一套断言。
-        NSMutableArray *same = [NSMutableArray array], *cards = [NSMutableArray array];
-        for (NSDictionary *d in mine) {
-            NSRect r = RectOf(d[@"kCGWindowBounds"]);
-            if (fabs(r.size.width - kWidgetW) <= 2.0 ||
-                fabs(r.size.width - (kWidgetW + kVaultPad * 2)) <= 2.0) [same addObject:d];
-            else [cards addObject:d];
-        }
+        // 卡片 272、弹药库 432、监视器 560（简略 272）、签到 700。
+        // 简略监视器和卡片同尺寸，宽度不能再分家：先看窗口标题，再按两块各自的位置存档对距离。
+        const NSSize kCardSize = { 272.0, 142.0 };
+        const NSSize kVaultSize = { 432.0, 294.0 };
+        BOOL monitorCompact = [Pref(@"DeskBoardMonitorCompact") boolValue];
+        const NSSize kMonitorSize = monitorCompact ? (NSSize){ 272.0, 142.0 }
+                                                   : (NSSize){ 560.0, 330.0 };
+        const NSSize kCreditsSize = { 700.0, 132.0 };
+        const double kWarpPad = 60.0;
 
         NSScreen *(^hostOf)(NSRect) = ^NSScreen *(NSRect b) {
             for (NSScreen *sc in screens) {
@@ -201,34 +215,64 @@ int main(int argc, const char *argv[]) {
             }
             return nil;
         };
-        // 存档里是"左下原点 + 锚角 + 偏移"，这里换成和实测同一口径的左上原点
-        double (^mismatchOf)(NSRect, DeskPlaceStore *) = ^double(NSRect body, DeskPlaceStore *st) {
-            NSScreen *host = hostOf(body);
-            if (!host) return 1e9;
-            DeskPlace p = [st placeForScreen:host];
-            NSRect vis = ToCG(host.visibleFrame, mainH);
-            CGFloat x = (p.corner == 1 || p.corner == 3) ? NSMaxX(vis) - kWidgetW - p.dx
+        // 按「角 + 距边」存档复算卡片在 CG 坐标（左上原点）里的落点；和 App 的 AppKit 公式是同一套。
+        NSRect (^expectedCardRect)(DeskPlaceStore *, NSSize, NSScreen *) =
+            ^NSRect(DeskPlaceStore *st, NSSize card, NSScreen *sc) {
+            NSRect vis = ToCG(sc.visibleFrame, mainH);
+            DeskPlace p = [st placeForScreen:sc];
+            CGFloat x = (p.corner == 1 || p.corner == 3) ? NSMaxX(vis) - card.width - p.dx
                                                          : vis.origin.x + p.dx;
-            CGFloat y = (p.corner >= 2) ? NSMaxY(vis) - p.dy - kWidgetH : vis.origin.y + p.dy;
-            return fabs(body.origin.x - x) + fabs(body.origin.y - y);
+            CGFloat top = (p.corner >= 2) ? NSMaxY(vis) - p.dy - card.height
+                                          : vis.origin.y + p.dy;
+            return NSMakeRect(x, top, card.width, card.height);
+        };
+        double (^distToPlace)(DeskPlaceStore *, NSSize, NSRect, NSScreen *) =
+            ^double(DeskPlaceStore *st, NSSize card, NSRect r, NSScreen *sc) {
+            NSRect want = expectedCardRect(st, card, sc);
+            CGFloat padX = MAX(0.0, (r.size.width - card.width) / 2.0);
+            CGFloat padY = MAX(0.0, (r.size.height - card.height) / 2.0);
+            NSRect body = NSInsetRect(r, padX, padY);
+            return hypot(body.origin.x - want.origin.x, body.origin.y - want.origin.y);
         };
 
-        NSMutableArray *vaults = [NSMutableArray array], *mons = [NSMutableArray array];
-        for (NSDictionary *d in same) {
-            NSRect b = RectOf(d[@"kCGWindowBounds"]);
-            NSRect body = (fabs(b.size.width - (kWidgetW + kVaultPad * 2)) <= 2.0)
-                ? NSInsetRect(b, kVaultPad, kVaultPad) : b;
-            double dv = mismatchOf(body, vstore), dm = mismatchOf(body, mstore);
-            if (dv > 8.0 && dm > 8.0) {
-                printf("⚠ 一块 432 宽的桌面层窗口和两份存档都对不上（弹药库差 %.0f、活动监视器差 %.0f），"
-                       "bounds=(%.0f, %.0f)\n", dv, dm, b.origin.x, b.origin.y);
-                [vaults addObject:d];   // 宁可继续用弹药库那套断言检它，也别悄悄漏掉
-            } else if (dv <= dm) [vaults addObject:d];
-            else [mons addObject:d];
+        NSMutableArray *cards = [NSMutableArray array];
+        NSMutableArray *credits = [NSMutableArray array];
+        NSMutableArray *vaults = [NSMutableArray array];
+        NSMutableArray *mons = [NSMutableArray array];
+        for (NSDictionary *d in mine) {
+            NSRect r = RectOf(d[@"kCGWindowBounds"]);
+            double w = r.size.width;
+            BOOL cardSized = fabs(w - kCardSize.width) <= 2.0
+                          || fabs(w - (kCardSize.width + kWarpPad * 2)) <= 2.0;
+            BOOL monitorDistinct = fabs(kMonitorSize.width - kCardSize.width) > 2.0;
+            BOOL monitorSized = fabs(w - kMonitorSize.width) <= 2.0
+                             || fabs(w - (kMonitorSize.width + kWarpPad * 2)) <= 2.0;
+            if (fabs(w - kCreditsSize.width) <= 2.0) {
+                [credits addObject:d];
+            } else if (fabs(w - kVaultSize.width) <= 2.0 ||
+                       fabs(w - (kVaultSize.width + kWarpPad * 2)) <= 2.0) {
+                [vaults addObject:d];
+            } else if (monitorDistinct && monitorSized) {
+                [mons addObject:d];
+            } else if (cardSized) {
+                // 简略监视器和卡片同尺寸（272×142，变形都是 392×262）。标题拿不到时，
+                // 用两块各自的摆位存档算落点，谁近算谁 —— 宽度这条路在这时已经完全失效。
+                NSString *wn = d[@"kCGWindowName"];
+                BOOL isMonitor = [wn isKindOfClass:[NSString class]] && [wn containsString:@"活动监视器"];
+                NSScreen *host = hostOf(r);
+                if (!isMonitor && host) {
+                    double dc = distToPlace(store, kCardSize, r, host);
+                    double dm = distToPlace(mstore, kMonitorSize, r, host);
+                    if (dm + 1.0 < dc) isMonitor = YES;
+                }
+                if (isMonitor) [mons addObject:d]; else [cards addObject:d];
+            } else {
+                printf("⚠ 未知宽度的桌面层窗口 %.0fx%.0f\n", w, r.size.height);
+            }
         }
 
-        void (^checkWidget)(NSString *, DeskPlaceStore *, NSDictionary *, BOOL, BOOL) =
-            ^(NSString *name, DeskPlaceStore *st, NSDictionary *d, BOOL allowWarp, BOOL checkAlpha) {
+        void (^checkWidget)(NSString *, DeskPlaceStore *, NSDictionary *, NSSize, BOOL, BOOL) =
+            ^(NSString *name, DeskPlaceStore *st, NSDictionary *d, NSSize card, BOOL allowWarp, BOOL checkAlpha) {
             NSRect b = RectOf(d[@"kCGWindowBounds"]);
             printf("%s bounds=(%.0f, %.0f) %.0fx%.0f\n", name.UTF8String, b.origin.x, b.origin.y,
                    b.size.width, b.size.height);
@@ -245,9 +289,11 @@ int main(int argc, const char *argv[]) {
                         @"%@透明度 实测 %.2f（存档期望 %.2f）", name, [alphaKey doubleValue], want);
                 }
             }
-            BOOL warped = allowWarp && fabs(b.size.width - (kWidgetW + kVaultPad * 2)) <= 2.0;
-            NSRect body = warped ? NSInsetRect(b, kVaultPad, kVaultPad) : b;
-            Say(fabs(body.size.width - kWidgetW) <= 2.0 && fabs(body.size.height - kWidgetH) <= 2.0,
+            BOOL warped = allowWarp &&
+                fabs(b.size.width - (card.width + kWarpPad * 2)) <= 2.0 &&
+                fabs(b.size.height - (card.height + kWarpPad * 2)) <= 2.0;
+            NSRect body = warped ? NSInsetRect(b, kWarpPad, kWarpPad) : b;
+            Say(fabs(body.size.width - card.width) <= 2.0 && fabs(body.size.height - card.height) <= 2.0,
                 @"%@本体 %.0fx%.0fpt（%@，窗口 %.0fx%.0f）", name, body.size.width, body.size.height,
                 warped ? @"变形中" : @"未变形", b.size.width, b.size.height);
             NSScreen *host = hostOf(b);
@@ -259,7 +305,7 @@ int main(int argc, const char *argv[]) {
             //   上沿锚定 → 本体顶边 = vis.origin.y + dy
             //   下沿锚定 → 本体底边 = NSMaxY(vis) - dy
             // 照抄 App 的式子会凭空多出几百点的假偏差。别"顺手修正"这里。
-            CGFloat x = (p.corner == 1 || p.corner == 3) ? NSMaxX(vis) - kWidgetW - p.dx
+            CGFloat x = (p.corner == 1 || p.corner == 3) ? NSMaxX(vis) - card.width - p.dx
                                                          : vis.origin.x + p.dx;
             CGFloat edgeY = (p.corner >= 2) ? NSMaxY(vis) - p.dy : vis.origin.y + p.dy;
             CGFloat gotY = (p.corner >= 2) ? NSMaxY(body) : body.origin.y;
@@ -275,7 +321,7 @@ int main(int argc, const char *argv[]) {
                    userHidden ? "用户已隐藏" : "多半是被别的窗口盖住触发了自动收起");
         } else {
             printf("弹药库窗口检出 %lu 个\n", (unsigned long)vaults.count);
-            for (NSDictionary *d in vaults) checkWidget(@"弹药库", vstore, d, YES, YES);
+            for (NSDictionary *d in vaults) checkWidget(@"弹药库", vstore, d, kVaultSize, YES, YES);
         }
         if (mons.count == 0) {
             BOOL userHidden = [Pref(@"DeskBoardMonitorHidden") boolValue];
@@ -283,7 +329,14 @@ int main(int argc, const char *argv[]) {
                    userHidden ? "用户已隐藏" : "组件没建窗");
         } else {
             printf("活动监视器窗口检出 %lu 个\n", (unsigned long)mons.count);
-            for (NSDictionary *d in mons) checkWidget(@"活动监视器", mstore, d, YES, NO);   // 现在它也认变形那档 552x414
+            for (NSDictionary *d in mons) checkWidget(@"活动监视器", mstore, d, kMonitorSize, YES, NO);
+        }
+        if ([Pref(@"DeskBoardCreditsHidden") boolValue]) {
+            printf("⚠ 签到组件用户已隐藏，跳过位置校验\n");
+        } else {
+            Say(credits.count == screens.count, @"每屏一个签到窗口：检出 %lu / 屏幕 %lu",
+                (unsigned long)credits.count, (unsigned long)screens.count);
+            for (NSDictionary *d in credits) checkWidget(@"签到", cstore, d, kCreditsSize, NO, NO);
         }
 
         Say(cards.count == screens.count, @"每屏一个卡片窗口：检出 %lu / 屏幕 %lu",
@@ -314,7 +367,7 @@ int main(int argc, const char *argv[]) {
             // 注意是"比该对齐的那条横边"，不是照抄 App 的还原公式：b 和 vis 已经是
             // 左上原点，y 轴和 App 的左下原点相反。理由同弹药库那段注释。
             DeskPlace p = [store placeForScreen:host];
-            double cardW = 480.0;   // kDeskPanelWidth，横版
+            double cardW = 272.0;   // panel_view.m 的 kDeskPanelWidth（弹药库式卡片）
             CGFloat x = (p.corner == 1 || p.corner == 3) ? NSMaxX(vis) - cardW - p.dx : vis.origin.x + p.dx;
             CGFloat edgeY = (p.corner >= 2) ? NSMaxY(vis) - p.dy : vis.origin.y + p.dy;   // 该对齐的那条横边
             CGFloat gotY  = (p.corner >= 2) ? NSMaxY(cb) : cb.origin.y;

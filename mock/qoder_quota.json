@@ -1,0 +1,22 @@
+{
+  "userId": "019f5f44-9ad4-7448-a168-a5fab1b1cb05",
+  "userType": "personal_standard",
+  "usageType": "credits",
+  "totalUsagePercentage": 0.22,
+  "isQuotaExceeded": false,
+  "userQuota": {
+    "total": 0.0,
+    "used": 0.0,
+    "remaining": 0.0,
+    "percentage": 0.0,
+    "unit": "credits"
+  },
+  "addOnQuota": {
+    "total": 2600.0,
+    "used": 567.0,
+    "remaining": 2033.0,
+    "percentage": 0.22,
+    "unit": "credits"
+  },
+  "isPlanQuotaProrated": false
+}

@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PULSE · 3D Particle Style Lab</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='10' fill='none' stroke='%2370D8FF' stroke-width='1.6'/%3E%3Ccircle cx='16' cy='16' r='3.5' fill='%23EAF9FF'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-style="nova">
+
+<div class="wallpaper"><div class="photo"></div></div>
+
+<div class="app" id="app">
+
+  <aside class="panel lab" id="lab">
+    <div class="brand">
+      <span class="dot"></span>
+      <b>PULSE</b>
+      <span class="sub">3D AGENT · STATE LAB</span>
+      <button class="icon-btn" id="btnHide" title="隐藏面板（H）">×</button>
+    </div>
+
+    <div class="lab-current">
+      <div class="cap">AGENT STATE</div>
+      <div class="current-card">
+        <span class="state-dot" id="labStateDot"></span>
+        <div class="current-name">
+          <div class="zh" id="labStateZh">待机</div>
+          <div class="en" id="labStateEn">IDLE</div>
+        </div>
+        <span class="current-time" id="labStateTime">0.0s</span>
+      </div>
+    </div>
+
+    <div class="lab-section">
+      <div class="cap">STATES / 状态实验室</div>
+      <div class="state-grid" id="stateGrid"></div>
+    </div>
+
+    <div class="lab-section">
+      <div class="cap">EVENT LOG</div>
+      <div class="eventlog" id="eventLog"></div>
+    </div>
+
+    <details class="env" id="envBox">
+      <summary><span>ENVIRONMENT / 环境</span><span class="health-mini" id="healthMini">正常</span></summary>
+      <div class="rows">
+        <label class="row"><span>负载</span><input id="cpu" type="range" min="0" max="100" value="37"><output id="outCpu">37%</output></label>
+        <label class="row"><span>温度</span><input id="temp" type="range" min="40" max="95" value="62"><output id="outTemp">62°</output></label>
+        <label class="row"><span>磁盘</span><input id="disk" type="range" min="0" max="100" value="44"><output id="outDisk">44%</output></label>
+        <label class="row"><span>电池</span><input id="battery" type="range" min="5" max="100" value="80"><output id="outBattery">80%</output></label>
+        <label class="row"><span>密度</span>
+          <select id="density">
+            <option value="low">低</option>
+            <option value="mid" selected>中</option>
+            <option value="high">高</option>
+          </select>
+          <output id="outDensity">0</output>
+        </label>
+        <label class="row"><span>帧率</span>
+          <select id="frameCap">
+            <option value="60" selected>60</option>
+            <option value="40">40</option>
+            <option value="30">30</option>
+            <option value="20">20</option>
+          </select>
+          <output id="outFrame">60</output>
+        </label>
+      </div>
+      <div class="env-note">环境只改变外圈健康刻度，不抢 Agent 状态颜色。</div>
+    </details>
+
+    <div class="lab-foot">
+      <span class="lamp"></span>
+      <span id="fps">60 FPS</span>
+      <span id="particleCount">0 粒子</span>
+      <span class="right" id="healthText">环境正常</span>
+    </div>
+  </aside>
+
+  <main class="stage">
+    <div class="stage-top">
+      <span class="stage-brand">PULSE</span>
+      <span class="stage-sub">3D PARTICLE STYLE LAB</span>
+    </div>
+
+    <div class="stylebar" id="styleBar">
+      <div class="style-tabs" id="styleTabs">
+        <button class="style-tab" data-style="crystal">
+          <b><i>A</i> CRYSTAL</b>
+          <span>精密点阵</span>
+          <span class="swatches"><i style="--sw:#B2EEFF"></i><i style="--sw:#70D8FF"></i><i style="--sw:#7C8CFF"></i></span>
+        </button>
+        <button class="style-tab active" data-style="nova">
+          <b><i>B</i> NOVA</b>
+          <span>体积星云</span>
+          <span class="swatches"><i style="--sw:#70D8FF"></i><i style="--sw:#57E0C8"></i><i style="--sw:#8C7DFF"></i><i style="--sw:#D06BFF"></i></span>
+        </button>
+        <button class="style-tab" data-style="flux">
+          <b><i>C</i> FLUX</b>
+          <span>3D 光流</span>
+          <span class="swatches"><i style="--sw:#6BF0C0"></i><i style="--sw:#70D8FF"></i><i style="--sw:#FF6BD6"></i></span>
+        </button>
+      </div>
+      <div class="style-hud">
+        <span id="styleFps">60 FPS</span>
+        <span id="styleCount">— 粒子</span>
+        <span class="gl-dot"></span><span>WEBGL</span>
+      </div>
+      <div class="style-desc" id="styleDesc">青 / 蓝绿 / 紫 / 品红 · 4.2k 体积星云 · 大核心；优先气势与电影感。</div>
+    </div>
+
+    <div class="orb-wrap" id="orbWrap">
+      <canvas id="gl" width="520" height="520" aria-hidden="true"></canvas>
+      <canvas id="orb" width="520" height="520" aria-label="PULSE 粒子智能体"></canvas>
+      <div class="orb-label" id="orbLabel">
+        <div class="orb-line1" id="orbLine1">待机</div>
+        <div class="orb-line2" id="orbLine2">给 PULSE 一个任务</div>
+      </div>
+      <div class="health-chip" id="healthChip"><i></i><span>环境正常</span></div>
+      <div class="station-tip" id="stationTip"></div>
+    </div>
+
+    <div class="stage-hint">A / B / C 切换风格 · 拖动旋转视角 · 滚轮缩放 · 单击核心打开命令环 · H 隐藏面板</div>
+    <button class="restore" id="restore">面板</button>
+  </main>
+
+  <aside class="panel console" id="console">
+    <div class="console-head">
+      <div class="brand">
+        <span class="dot"></span>
+        <b>PULSE</b>
+        <span class="sub">AGENT CONSOLE</span>
+      </div>
+      <div class="engine-tag">LOCAL DEMO ENGINE · SHARED BY ALL STYLES</div>
+      <div class="console-status">
+        <span class="chip" id="consoleState"><i></i><em>待机</em></span>
+        <span class="rate" id="consoleRate">—</span>
+      </div>
+    </div>
+
+    <div class="trace" id="trace"></div>
+
+    <div class="quick" id="quick"></div>
+
+    <form class="composer" id="composer">
+      <input id="taskInput" type="text" autocomplete="off" spellcheck="false"
+             placeholder="给 PULSE 一个任务…">
+      <button type="submit" id="sendBtn">发送</button>
+    </form>
+
+    <div class="console-foot">
+      <label class="switch"><input type="checkbox" id="autoApprove"><span>自动批准</span></label>
+      <button id="pauseBtn">暂停</button>
+      <button id="cancelBtn">中断</button>
+      <span class="foot-hint">Enter 发送</span>
+    </div>
+  </aside>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="states.js"></script>
+<script src="engine.js"></script>
+<script src="agent.js"></script>
+<script src="styleswitch.js"></script>
+</body>
+</html>

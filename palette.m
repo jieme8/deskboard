@@ -12,18 +12,18 @@ static BOOL IsDarkAppearance(NSAppearance *appearance) {
 
 BOOL DeskViewIsDark(NSView *view) { return IsDarkAppearance(view.effectiveAppearance); }
 
-// HUD 一套刻意不分成深浅两版：它是投在窗玻璃上的显示层，颜色取自壁纸里那台雷达屏的青色，
-// 靠文字外发光而不是靠底板保证可读
+// HUD 一套刻意不分成深浅两版：它是一块没有边框的玻璃，透的是用户自己的壁纸。
+// 文字走中性近白，只有数据刻度保留雷达青 —— 玻璃本身不该有自己的颜色。
 DeskPalette DeskPaletteFor(DeskStyle style, BOOL dark) {
     DeskPalette p;
     if (style == DeskStyleHUD) {
         p.glow     = [NSColor colorWithWhite:0 alpha:0.75];
         p.border   = [NSColor clearColor];
-        p.sep      = DeskRGB(120, 214, 255, 0.26);
-        p.title    = DeskRGB(126, 190, 224, 1);
-        p.primary  = DeskRGB(226, 246, 255, 1);
-        p.label    = DeskRGB(140, 196, 226, 1);
-        p.footer   = DeskRGB(112, 162, 192, 1);
+        p.sep      = [NSColor colorWithWhite:1 alpha:0.10];
+        p.title    = DeskRGB(202, 222, 233, 1);
+        p.primary  = DeskRGB(244, 250, 255, 1);
+        p.label    = DeskRGB(184, 204, 216, 1);
+        p.footer   = DeskRGB(160, 182, 198, 1);
         p.up       = DeskRGB(255, 122, 122, 1);
         p.down     = DeskRGB(120, 226, 172, 1);
         p.accent   = DeskRGB(112, 216, 255, 1);

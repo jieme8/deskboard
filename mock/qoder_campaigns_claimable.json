@@ -1,0 +1,20 @@
+{
+  "uid": "019f5f44-9ad4-7448-a168-a5fab1b1cb05",
+  "showCampaign": true,
+  "claimable": true,
+  "campaigns": [
+    {
+      "campaignId": "01a15aa6-16bb-7bc6-a300-d19ec757de91",
+      "campaignKey": "act-20261021-436",
+      "actionType": "CLAIM_BENEFIT",
+      "startAt": 0,
+      "endAt": 4102444800,
+      "claimStatus": "CLAIMABLE",
+      "benefit": {
+        "kind": "CREDITS",
+        "amount": 100,
+        "validity": { "mode": "RELATIVE_DAYS", "days": 30 }
+      }
+    }
+  ]
+}

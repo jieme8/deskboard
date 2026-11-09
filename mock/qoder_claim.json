@@ -1,0 +1,7 @@
+{
+  "campaignId": "01a15aa6-16bb-7bc6-a300-d19ec757de91",
+  "campaignKey": "act-20261021-436",
+  "status": "CLAIMED",
+  "replayed": false,
+  "benefit": { "kind": "CREDITS", "amount": 100 }
+}

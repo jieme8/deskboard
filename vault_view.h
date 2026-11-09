@@ -18,6 +18,7 @@ NS_ASSUME_NONNULL_BEGIN
 // 调角：和卡片面板同一套四角自由变形
 @property (nonatomic, assign) DeskQuadOffsets quadOffsets;
 @property (nonatomic, assign) BOOL editing;
+@property (nonatomic, assign) BOOL locked;       // 全局锁定：整块不吃拖动，卡片/操作坞照旧
 @property (nonatomic, assign) DeskStyle style;   // 外观，直接复用卡片面板那一套
 @property (nonatomic, copy) void (^onQuadEdit)(DeskQuadOffsets);
 @property (nonatomic, copy) void (^onGeometryChange)(void);
@@ -59,5 +60,13 @@ NSRect VaultDragFrame(NSRect frameAtStart, NSPoint mouseAtStart, NSPoint mouseNo
 - (BOOL)needsRedraw;              // 当前有没有非静态内容在动
 
 @end
+
+// 悬停预览浮窗的内容视图。普通 NSView（不翻转），所以 NSImage 直接 drawInRect:
+// 就是正的，不需要像组件内部那样手动翻坐标空间 —— 那边是因为视图是翻转坐标才要翻回来。
+@interface DeskVaultPreviewView : NSView
+@property (nonatomic, strong) NSImage *image;
+@property (nonatomic, strong) NSColor *tint;
+@end
+
 NS_ASSUME_NONNULL_END
 

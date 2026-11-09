@@ -1,0 +1,751 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeskBoard · 温度行重设计</title>
+<style>
+:root{
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, Monaco, monospace;
+  --cyan:#70D8FF; --cyan-b:#B2EEFF; --paper:#E2F6FF; --muted:#7EB0CE;
+  --amber:#FFC46B; --amber-b:#FFE8B3; --red:#FF6B6B; --red-b:#FFC2B8;
+  --lv:#70D8FF; --lvb:#B2EEFF;
+  --lv10:rgba(112,216,255,.10); --lv30:rgba(112,216,255,.30);
+  --num:#E2F6FF; --glow:rgba(178,238,255,.26);
+  --frac:0.475;
+  --ui:#cfe6f2; --ui-muted:#8fb0c4;
+}
+body[data-level="warn"]{
+  --lv:#FFC46B; --lvb:#FFE8B3;
+  --lv10:rgba(255,196,107,.10); --lv30:rgba(255,196,107,.30);
+  --num:#FFC46B; --glow:rgba(255,196,107,.45);
+}
+body[data-level="crit"]{
+  --lv:#FF6B6B; --lvb:#FFC2B8;
+  --lv10:rgba(255,107,107,.10); --lv30:rgba(255,107,107,.30);
+  --num:#FF6B6B; --glow:rgba(255,107,107,.50);
+}
+body[data-level="unknown"]{
+  --lv:#7EB0CE; --lvb:#7EB0CE;
+  --lv10:rgba(126,176,206,.10); --lv30:rgba(126,176,206,.30);
+  --num:#7EB0CE; --glow:rgba(0,0,0,0);
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{
+  font-family:var(--font);
+  color:var(--ui);
+  background:#050b14 url(bg.jpg) center/cover no-repeat fixed;
+  -webkit-font-smoothing:antialiased;
+}
+body::after{
+  content:"";
+  position:fixed; inset:0; pointer-events:none; z-index:0;
+  background:
+    radial-gradient(120% 70% at 50% 0%, rgba(3,10,20,.55), rgba(3,10,20,.18) 55%, rgba(3,10,20,.42) 100%),
+    linear-gradient(180deg, rgba(3,10,20,.36), rgba(3,10,20,.10) 24%, rgba(3,10,20,.44));
+}
+.page{position:relative;z-index:1;padding-bottom:34px}
+
+/* ---------- 顶部工具栏 ---------- */
+.bar{
+  position:sticky; top:0; z-index:60;
+  display:flex; flex-wrap:wrap; align-items:center; gap:14px 22px;
+  padding:12px 24px;
+  background:rgba(6,15,27,.66);
+  backdrop-filter:blur(18px) saturate(1.1);
+  -webkit-backdrop-filter:blur(18px) saturate(1.1);
+  border-bottom:.5px solid rgba(112,216,255,.16);
+}
+.brand{display:flex;align-items:center;gap:8px;font:600 13px/1.2 var(--font);color:#EDF9FF;letter-spacing:.2px}
+.brand .dot{width:6px;height:6px;border-radius:50%;background:var(--cyan);box-shadow:0 0 8px rgba(112,216,255,.8)}
+.hint{font:11px/1.4 var(--font);color:var(--ui-muted)}
+.controls{margin-left:auto;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.ctrl{display:flex;align-items:center;gap:9px;font:11px var(--font);color:var(--ui-muted)}
+.ctrl output{font:600 12px var(--mono);color:#EDF9FF;min-width:64px;font-variant-numeric:tabular-nums}
+input[type=range]{
+  -webkit-appearance:none;appearance:none;width:136px;height:3px;border-radius:2px;
+  background:linear-gradient(90deg, rgba(112,216,255,.85), rgba(255,196,107,.85) 62%, rgba(255,107,107,.9));
+  outline:none;
+}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;width:11px;height:11px;border-radius:50%;
+  background:#EDF9FF;border:1px solid rgba(10,26,42,.8);box-shadow:0 0 0 3px rgba(112,216,255,.22);
+  cursor:pointer;
+}
+.presets{display:flex;gap:6px;flex-wrap:wrap}
+.presets button{
+  font:11px var(--font);color:#BBD6E5;background:rgba(112,216,255,.06);
+  border:.5px solid rgba(112,216,255,.20);border-radius:6px;padding:4px 8px;cursor:pointer;
+}
+.presets button:hover{background:rgba(112,216,255,.14);color:#EDF9FF}
+.presets button.on{background:rgba(112,216,255,.20);border-color:rgba(178,238,255,.65);color:#F3FBFF}
+.chk{display:flex;align-items:center;gap:6px;font:11px var(--font);color:#BBD6E5;cursor:pointer;user-select:none}
+.chk input{accent-color:#70D8FF;width:12px;height:12px;margin:0}
+.picked{font:11px var(--font);color:var(--ui-muted);white-space:nowrap}
+.picked b{color:#EAF8FF;font-weight:600}
+.picked .tag{
+  display:inline-block;margin-left:6px;padding:2px 7px;border-radius:10px;
+  background:rgba(112,216,255,.16);border:.5px solid rgba(112,216,255,.4);color:#DDF5FF;
+}
+
+/* ---------- 卡片组 ---------- */
+main{padding:0 24px}
+.cards{display:flex;flex-wrap:wrap;justify-content:center;align-items:flex-start;gap:14px;padding-top:20px;max-width:1470px;margin:0 auto}
+.slot{width:272px}
+.cap{margin-top:9px;font:11px/1.45 var(--font);color:#9FBDCE;padding:0 2px}
+.cap .rowline{display:flex;align-items:center;gap:8px;justify-content:space-between}
+.cap b{color:#E6F7FF;font-size:11.5px}
+.cap .tag{font:600 9px/1 var(--mono);color:#91B3C6;border:.5px solid rgba(126,176,206,.35);border-radius:4px;padding:2px 4px}
+.cap .pick{
+  font:10.5px var(--font);color:#BBD6E5;background:rgba(112,216,255,.05);
+  border:.5px solid rgba(112,216,255,.24);border-radius:5px;padding:3px 7px;cursor:pointer;white-space:nowrap;
+}
+.cap .pick:hover{background:rgba(112,216,255,.16);color:#F2FBFF}
+.cap .pick.on{background:rgba(112,216,255,.24);border-color:rgba(178,238,255,.75);color:#F6FCFF}
+
+/* ---------- 卡片 ---------- */
+.card{
+  position:relative;width:272px;height:179px;border-radius:14px;overflow:hidden;
+  background:linear-gradient(180deg,
+    rgba(4,16,34,.46) 0%, rgba(4,16,34,.38) 16%,
+    rgba(5,22,46,.24) 52%, rgba(5,22,46,.14) 100%);
+  backdrop-filter:blur(13px) saturate(1.06);
+  -webkit-backdrop-filter:blur(13px) saturate(1.06);
+  box-shadow:inset 0 0 22px rgba(2,10,22,.42), 0 10px 34px rgba(0,0,0,.38);
+  cursor:pointer;outline:none;
+  transition:box-shadow .18s ease;
+}
+.card::before{
+  content:"";position:absolute;inset:0;z-index:0;border-radius:inherit;pointer-events:none;
+  background:repeating-linear-gradient(180deg, rgba(0,8,18,.08) 0 1px, transparent 1px 3px);
+}
+.card::after{
+  content:"";position:absolute;inset:0;z-index:0;border-radius:inherit;pointer-events:none;
+  box-shadow:inset 0 0 0 .5px rgba(112,216,255,.16);
+}
+.card.sel{box-shadow:inset 0 0 0 1.5px rgba(178,238,255,.78), inset 0 0 22px rgba(2,10,22,.42), 0 0 26px rgba(112,216,255,.22)}
+.card > *{position:absolute;z-index:1}
+
+/* 四角准星 */
+.corner{width:13px;height:13px;border:0 solid rgba(112,216,255,.45);pointer-events:none}
+.corner.tl{left:6px;top:6px;border-left-width:1.2px;border-top-width:1.2px}
+.corner.tr{right:6px;top:6px;border-right-width:1.2px;border-top-width:1.2px}
+.corner.bl{left:6px;bottom:6px;border-left-width:1.2px;border-bottom-width:1.2px}
+.corner.br{right:6px;bottom:6px;border-right-width:1.2px;border-bottom-width:1.2px}
+
+/* 芯片图标 */
+.chip{left:14px;top:14px;width:18px;height:18px;pointer-events:none}
+.chip .body{position:absolute;left:3px;top:3px;right:3px;bottom:3px;border:1.1px solid rgba(112,216,255,.85);border-radius:2.5px}
+.chip .core{position:absolute;left:6.5px;top:6.5px;width:5px;height:5px;background:rgba(178,238,255,.95)}
+.chip .pin{position:absolute;color:rgba(112,216,255,.55);background:currentColor}
+.chip .pt{width:1px;height:2.5px;left:5px;top:.5px;box-shadow:3px 0 currentColor,6px 0 currentColor}
+.chip .pb{width:1px;height:2.5px;left:5px;bottom:.5px;box-shadow:3px 0 currentColor,6px 0 currentColor}
+.chip .pl{width:2.5px;height:1px;left:.5px;top:5px;box-shadow:0 3px currentColor,0 6px currentColor}
+.chip .pr{width:2.5px;height:1px;right:.5px;top:5px;box-shadow:0 3px currentColor,0 6px currentColor}
+
+.title{left:38px;top:13px;line-height:18px;font:600 13px var(--font);color:var(--paper);letter-spacing:.2px;white-space:nowrap}
+.subtitle{left:38px;top:31px;line-height:11px;font:500 8px var(--mono);color:var(--muted);letter-spacing:.35px;white-space:nowrap}
+
+.hline{left:14px;right:14px;top:47px;height:1px;background:rgba(112,216,255,.16)}
+.hline::after{content:"";position:absolute;left:0;top:0;width:26px;height:1px;background:rgba(112,216,255,.55)}
+
+.tile{
+  left:8px;top:50px;width:256px;height:92px;border-radius:10px;
+  background:rgba(10,26,42,.54);
+  box-shadow:inset 0 0 0 .5px rgba(112,216,255,.15);
+}
+.tile .edge{position:absolute;left:0;top:8px;width:2px;height:76px;background:rgba(178,238,255,.75)}
+.rows{position:absolute;left:12px;top:4px;width:232px}
+
+.row{position:relative;height:21px;width:232px}
+.row .led{
+  position:absolute;left:0;top:8.5px;width:4px;height:4px;
+  background:var(--lvc,var(--lv));opacity:var(--leda,.65);
+}
+.row .led.hollow{background:transparent;box-shadow:inset 0 0 0 .5px rgba(126,176,206,.55)}
+.lhead{position:absolute;left:8px;top:0;height:21px;display:flex;align-items:center;gap:6px}
+.tlabel{font:500 10px/1 var(--font);color:var(--muted);white-space:nowrap}
+.tpill{
+  height:12.5px;padding:0 4px;display:inline-flex;align-items:center;
+  border-radius:3.5px;font:600 8px/1 var(--font);color:var(--lv);
+  background:var(--lv10);box-shadow:inset 0 0 0 .5px var(--lv30);
+  white-space:nowrap;pointer-events:none;
+}
+.tval{position:absolute;right:0;top:0;height:21px;line-height:21px;text-align:right;white-space:nowrap}
+.tval .who{font:600 7.5px var(--font);color:var(--muted);letter-spacing:.2px;margin-right:3px;vertical-align:2px}
+.tval .main{font:600 11px var(--mono);color:var(--paper);font-variant-numeric:tabular-nums}
+.tval .sec{font:400 8.5px var(--mono);color:var(--muted);margin-right:7px;font-variant-numeric:tabular-nums}
+.tval .deg{font:500 9px var(--font);color:var(--muted);position:relative;top:-4px;margin-left:0}
+body[data-level="unknown"] .tval .who,
+body[data-level="unknown"] .tval .sec,
+body[data-level="unknown"] .tval .deg{display:none}
+body[data-level="unknown"] .vB .tval .main{font-size:12px;letter-spacing:0}
+.sep{position:absolute;left:0;right:0;bottom:0;height:1px;background:rgba(112,216,255,.07)}
+.row.dim .tlabel,.row.dim .tval{opacity:.55}
+
+/* 磁盘行 */
+.disk .disk-val{
+  position:absolute;right:0;top:0;height:17.5px;line-height:17.5px;text-align:right;white-space:nowrap;
+}
+.disk .meta{font:400 7.5px var(--mono);color:var(--muted)}
+.disk .small{font:400 8.5px var(--mono);color:var(--muted)}
+.disk .free{font:600 13.5px var(--mono);color:var(--paper);font-variant-numeric:tabular-nums;letter-spacing:-.2px}
+.disk .g{font:500 10px var(--mono);color:var(--paper)}
+.meter{position:absolute;left:0;right:0;bottom:0;height:3.5px}
+.meter i{position:absolute;top:0;height:100%}
+.meter .t1{left:0;width:80%;background:rgba(112,216,255,.10)}
+.meter .t2{left:80%;width:10%;background:rgba(255,196,107,.12)}
+.meter .t3{left:90%;width:10%;background:rgba(255,107,107,.13)}
+.meter .fill{left:0;width:calc(var(--dfrac,0.44)*100%);background:var(--cyan);opacity:.9}
+.meter .cap{position:absolute;left:calc(var(--dfrac,0.44)*100%);top:-1px;width:3px;height:calc(100% + 2px);background:var(--cyan-b);transform:translateX(-3px);opacity:.98}
+.meter .k1{left:80%;width:1.5px;top:-1px;height:calc(100% + 2px);background:rgba(255,196,107,.75);transform:translateX(-.75px)}
+.meter .k2{left:90%;width:1.5px;top:-1px;height:calc(100% + 2px);background:rgba(255,107,107,.80);transform:translateX(-.75px)}
+
+/* 表尾 */
+.fline{left:14px;right:14px;top:146px;height:1px;background:rgba(112,216,255,.14)}
+.fline::after{content:"";position:absolute;left:0;top:0;width:24px;height:1px;background:rgba(112,216,255,.55)}
+.footer{left:14px;right:14px;top:151px;height:14px;display:flex;align-items:center;justify-content:space-between;white-space:nowrap}
+.foot{font:400 8.5px var(--mono);color:var(--muted);display:flex;align-items:center;gap:0}
+.foot b{font:500 9px var(--mono);color:var(--paper);margin-left:4px}
+.foot .bpill{
+  margin-left:6px;height:11.5px;padding:0 4px;border-radius:3.5px;
+  font:600 7.5px/11px var(--font);color:var(--cyan);
+  background:rgba(112,216,255,.10);box-shadow:inset 0 0 0 .5px rgba(112,216,255,.30);
+}
+.clock{display:flex;gap:2px;align-items:center;margin-left:auto}
+.clock i{width:3px;height:7px;background:rgba(126,176,206,.20)}
+.clock i.on{background:rgba(112,216,255,.85)}
+
+/* ---------- 放大区 ---------- */
+.zoomhead{max-width:1470px;margin:26px auto 0;padding:0 2px;display:flex;align-items:baseline;gap:10px}
+.zoomhead h2{margin:0;font:600 12px var(--font);color:#E6F7FF;letter-spacing:.3px}
+.zoomhead span{font:10.5px var(--font);color:var(--ui-muted)}
+.zooms{
+  display:grid;grid-template-columns:repeat(2,488px);gap:16px 22px;justify-content:center;
+  max-width:1470px;margin:12px auto 0;padding:0 24px;
+}
+.zoom{
+  background:rgba(10,26,42,.54);border-radius:10px;padding:11px 12px 10px;
+  box-shadow:inset 0 0 0 .5px rgba(112,216,255,.15), 0 8px 26px rgba(0,0,0,.28);
+  backdrop-filter:blur(10px);
+  transition:box-shadow .18s ease;
+}
+.zoom.sel{box-shadow:inset 0 0 0 1.5px rgba(178,238,255,.7), 0 0 24px rgba(112,216,255,.18)}
+.zoom .zh{display:flex;align-items:center;gap:7px;font:11px var(--font);color:#D8EEF9;margin-bottom:8px}
+.zoom .zh b{font:600 10px var(--mono);color:#0A1A2A;background:#B2EEFF;border-radius:4px;padding:2px 5px}
+.zoom .zh em{font-style:normal;color:var(--ui-muted);margin-left:auto;font-size:10px}
+.zstage{width:464px;height:44px;overflow:visible}
+.zrow{width:232px;height:42px;transform:scale(2);transform-origin:0 0}
+.zrow .row{height:21px}
+.zoom p{margin:7px 0 0;font:10.5px/1.5 var(--font);color:#9FBDCE;min-height:16px}
+.zooms .nowref{grid-column:1 / -1;display:grid;grid-template-columns:464px 1fr;gap:26px;align-items:center}
+.zooms .nowref p{margin:0;max-width:520px;font-size:11px;line-height:1.65;color:#9FBDCE}
+.zooms .nowref b.zh-b{font-weight:600;color:#D8EEF9}
+
+.fineprint{max-width:1470px;margin:20px auto 0;padding:0 26px;font:10.5px/1.7 var(--font);color:#8BA9BB}
+.fineprint b{color:#C9E6F4;font-weight:600}
+@media (max-width:1080px){
+  .zooms{grid-template-columns:488px}
+  .zooms .nowref{grid-template-columns:1fr}
+  .zooms .nowref p{max-width:none}
+}
+@media (max-width:560px){
+  .zooms{padding:0 12px}
+  .zoom{width:100%}
+  .zstage{width:100%;height:auto}
+}
+
+/* ================= 变体 A：行首竖温度计 ================= */
+.vA .thermo{position:absolute;left:0;top:0;width:7px;height:21px;pointer-events:none}
+.vA .th-tube{
+  position:absolute;left:2.2px;top:1.5px;width:2.6px;height:13.2px;border-radius:1.4px;
+  background:rgba(226,246,255,.14);box-shadow:inset 0 0 0 .5px rgba(226,246,255,.18);
+  overflow:hidden;
+}
+.vA .th-fill{
+  position:absolute;left:0;right:0;bottom:0;height:calc(var(--frac,0)*13.2px);
+  background:var(--lv);border-radius:1.4px;transition:height .45s cubic-bezier(.2,.7,.3,1),background-color .25s;
+}
+.vA .th-fill::after{
+  content:"";position:absolute;left:0;right:0;top:0;height:1px;background:var(--lvb);opacity:.95;
+}
+.vA .th-bulb{
+  position:absolute;left:.3px;top:13.4px;width:6.4px;height:6.4px;border-radius:50%;
+  background:var(--lv);box-shadow:0 0 5px var(--lv30);
+  transition:background-color .25s,box-shadow .25s;
+}
+.vA .th-bulb::after{
+  content:"";position:absolute;left:1.8px;top:1.8px;width:2.8px;height:2.8px;border-radius:50%;
+  background:var(--lvb);opacity:.85;
+}
+.vA .tval .main{font-size:13px;color:var(--num);letter-spacing:-.1px}
+.vA .tval .main.unknown{color:var(--muted)}
+.vA .tval .deg{top:-4.5px;font-size:9px}
+.vA .tval .who{font-size:7.5px;vertical-align:2.5px}
+
+/* ================= 变体 B：大读数 + 热度 ================= */
+.vB .tval .main{
+  font-size:16px;color:var(--num);letter-spacing:-.3px;
+  text-shadow:0 0 10px var(--glow);transition:color .25s,text-shadow .25s;
+}
+.vB .tval .main.unknown{color:var(--muted);text-shadow:none}
+.vB .tval .who{font-size:8px;vertical-align:4px;letter-spacing:.3px}
+.vB .tval .deg{font-size:9.5px;top:-6px;margin-left:0}
+.vB .tval .sec{font-size:8px;margin-right:6px}
+.vB .tval .main{font-variant-numeric:tabular-nums}
+
+/* ================= 变体 C：CPU / SSD 双温度计 ================= */
+.vC .tval.sensors{
+  right:0;top:0;height:21px;display:flex;align-items:center;justify-content:flex-end;gap:10px;
+}
+.vC .sensor{display:flex;align-items:center;gap:3px;height:21px}
+.vC .sname{font:600 7px var(--font);color:var(--muted);letter-spacing:.2px}
+.vC .mini{position:relative;width:6px;height:19px;display:block}
+.vC .m-tube{
+  position:absolute;left:1.7px;top:0;width:2.6px;height:12.6px;border-radius:1.3px;
+  background:rgba(226,246,255,.14);box-shadow:inset 0 0 0 .5px rgba(226,246,255,.18);
+  overflow:hidden;
+}
+.vC .m-fill{
+  position:absolute;left:0;right:0;bottom:0;height:calc(var(--sfrac,0)*12.6px);
+  background:var(--slv,#70D8FF);border-radius:1.3px;
+  transition:height .45s cubic-bezier(.2,.7,.3,1),background-color .25s;
+}
+.vC .m-bulb{
+  position:absolute;left:.2px;top:12.6px;width:5.6px;height:5.6px;border-radius:50%;
+  background:var(--slv,#70D8FF);transition:background-color .25s;
+}
+.vC .m-bulb::after{
+  content:"";position:absolute;left:1.6px;top:1.6px;width:2.4px;height:2.4px;border-radius:50%;
+  background:var(--slvb,#B2EEFF);opacity:.85;
+}
+.vC .snum{
+  font:600 11px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums;
+  transition:color .25s;margin-left:1px;
+}
+.vC .sensor.hot .snum{color:var(--paper)}
+.vC .sensor[data-level="warn"]{--slv:#FFC46B;--slvb:#FFE8B3}
+.vC .sensor[data-level="crit"]{--slv:#FF6B6B;--slvb:#FFC2B8}
+.vC .sensor[data-level="unknown"]{--slv:#7EB0CE;--slvb:#7EB0CE}
+.vC .sensor[data-level="unknown"] .snum{color:var(--muted)}
+.vC .sensor.hot[data-level="warn"] .snum{color:#FFD99B}
+.vC .sensor.hot[data-level="crit"] .snum{color:#FFB3B3}
+
+/* ================= 变体 D：20 格热力刻度 ================= */
+.vD .tlabel{height:17px;line-height:17px}
+.vD .tpill{top:2.25px}
+.vD .tval{height:17px;line-height:17px}
+.vD .tval .main{font-size:12px;color:var(--num);letter-spacing:-.1px}
+.vD .tval .main.unknown{color:var(--muted)}
+.vD .tval .deg{top:-4px}
+.vD .tval .who{vertical-align:2px}
+.ladder{position:absolute;left:0;right:0;bottom:0;height:7px;display:flex;align-items:flex-end;gap:2px}
+.ladder i{
+  flex:1;height:5px;border-radius:1px;background:rgba(226,246,255,.10);
+  transition:background-color .22s ease,height .22s ease;
+}
+.ladder i.tick{height:7px}
+.ladder i.tick.z1{background:rgba(255,196,107,.26)}
+.ladder i.tick.z2{background:rgba(255,107,107,.28)}
+.ladder i.z1.on{background:#FFC46B}
+.ladder i.z2.on{background:#FF6B6B}
+.ladder i.z0.on{background:#70D8FF}
+.ladder i.on{opacity:.92}
+.ladder i.head.z0{box-shadow:0 0 6px rgba(112,216,255,.55)}
+.ladder i.head.z1{box-shadow:0 0 6px rgba(255,196,107,.60)}
+.ladder i.head.z2{box-shadow:0 0 6px rgba(255,107,107,.62)}
+.ladder i.head{filter:brightness(1.25)}
+
+/* 现状卡里的旧条 */
+.now-bar{position:absolute;left:0;right:0;bottom:0;height:2px}
+.now-bar .t1{position:absolute;left:0;top:0;height:2px;width:70%;background:rgba(112,216,255,.10)}
+.now-bar .t2{position:absolute;left:70%;top:0;height:2px;width:15%;background:rgba(255,196,107,.12)}
+.now-bar .t3{position:absolute;left:85%;top:0;height:2px;width:15%;background:rgba(255,107,107,.13)}
+.now-bar .fill{position:absolute;left:0;top:0;height:2px;width:calc(var(--frac,0.475)*100%);background:var(--lv);opacity:.9;transition:width .45s cubic-bezier(.2,.7,.3,1)}
+.now-bar .cap{position:absolute;left:calc(var(--frac,0.475)*100%);top:0;width:2.5px;height:2px;background:var(--lvb);transform:translateX(-2.5px)}
+.now-bar .k1{position:absolute;left:70%;top:-1px;width:1.5px;height:4px;background:rgba(255,196,107,.75)}
+.now-bar .k2{position:absolute;left:85%;top:-1px;width:1.5px;height:4px;background:rgba(255,107,107,.8)}
+</style>
+</head>
+<body data-level="normal">
+<div class="page">
+  <header class="bar">
+    <div class="brand"><span class="dot"></span>DeskBoard · 系统状态</div>
+    <div class="hint">温度行重设计 · 同一张卡、同一份数据，只换温度那一行</div>
+    <div class="controls">
+      <div class="ctrl">
+        <span>CPU</span>
+        <input id="temp" type="range" min="30" max="95" step="0.1" value="47.5" aria-label="CPU 温度">
+        <output id="tempOut">47.5 °C</output>
+      </div>
+      <div class="presets" id="presets">
+        <button data-temp="34">待机 34°</button>
+        <button data-temp="47.5" class="on">正常 47.5°</button>
+        <button data-temp="76">偏高 76°</button>
+        <button data-temp="88">过高 88°</button>
+        <button data-temp="none">无数据</button>
+      </div>
+      <label class="chk"><input type="checkbox" id="drift"> 波动</label>
+      <label class="chk"><input type="checkbox" id="ssdHot"> SSD 更热</label>
+      <div class="picked">已选 <b id="pickedName">未选</b><span class="tag" id="pickedTag">点卡片或按 1–4</span></div>
+    </div>
+  </header>
+
+  <main>
+    <section class="cards" id="cards"></section>
+
+    <div class="zoomhead">
+      <h2>温度行放大 2×</h2>
+      <span>行高 21、内容宽 232 原尺寸复刻；放大只是看细节，判断请以 1× 为准</span>
+    </div>
+    <section class="zooms" id="zooms"></section>
+
+    <p class="fineprint">
+      四个方向都保持 <b>行高 21pt</b>、<b>内容宽 232pt</b>、<b>272×179 卡片</b>不变：
+      A / B 把温度从“条”里拿出来，C 把 CPU、SSD 拆成两支，D 保留条但换成热力刻度。
+      数值、状态词（正常 / 偏高 / 过高）与 70 / 85 阈值沿用现有逻辑；点卡片选中，按 1–4 切换选择。
+    </p>
+  </main>
+</div>
+
+<script>
+(function(){
+  var state = {
+    cpu: 47.5,
+    base: 47.5,
+    unknown: false,
+    ssdHot: false,
+    drift: false,
+    sel: null
+  };
+
+  var VARIANTS = [
+    { id:'A', name:'竖式温度计', short:'竖温度计',
+      note:'行首换成球泡 + 水银柱，读数 13px 随热度变暖；不再和磁盘共用“容量条”。' },
+    { id:'B', name:'大读数 + 热度', short:'大读数',
+      note:'数字当主角：16px、随温度从冷白转琥珀/红，带软光晕；整行没有条。' },
+    { id:'C', name:'双通道温度计', short:'双温度计',
+      note:'CPU / SSD 各一支小温度计，各自按自己温度上色；谁热谁的字更亮。' },
+    { id:'D', name:'热力刻度', short:'热力刻度',
+      note:'20 格热力条，70 / 85 是断点；越过才变琥珀/红，像仪器刻度而不是进度条。' }
+  ];
+
+  function clamp(v,a,b){ return Math.min(b, Math.max(a, v)); }
+  function fmtCpu(v){ return v.toFixed(1); }
+  function fmtSsd(v){ return Math.round(v).toString(); }
+  function levelOf(t){
+    if (!(t > 0)) return 'unknown';
+    if (t < 70) return 'normal';
+    if (t <= 85) return 'warn';
+    return 'crit';
+  }
+  function levelColor(l){
+    return l === 'warn' ? '#FFC46B' : l === 'crit' ? '#FF6B6B' : l === 'unknown' ? '#7EB0CE' : '#70D8FF';
+  }
+
+  function data(){
+    if (state.unknown) {
+      return { cpu:-1, ssd:-1, hot:-1, level:'unknown', frac:0, hotIsCpu:true,
+               cpuText:'—', ssdText:'—', hotText:'—', coldText:'—', who:'—', pill:'—',
+               now:'—' };
+    }
+    var cpu = state.cpu;
+    var ssd = state.ssdHot ? clamp(cpu + 6, 20, 99) : clamp(cpu - 3.5, 26, 99);
+    var hotIsCpu = cpu >= ssd;
+    var hot = hotIsCpu ? cpu : ssd;
+    var cold = hotIsCpu ? ssd : cpu;
+    var hotName = hotIsCpu ? 'CPU' : 'SSD';
+    var coldName = hotIsCpu ? 'SSD' : 'CPU';
+    var hotText = hotIsCpu ? fmtCpu(hot) : fmtSsd(hot);
+    var coldText = hotIsCpu ? fmtSsd(cold) : fmtCpu(cold);
+    var lvl = levelOf(hot);
+    return {
+      cpu:cpu, ssd:ssd, hot:hot, level:lvl, frac:clamp(hot/100, 0, 1), hotIsCpu:hotIsCpu,
+      cpuText: fmtCpu(cpu), ssdText: fmtSsd(ssd),
+      hotText: hotText, coldText: coldText, who: hotName,
+      coldLabel: coldName,
+      pill: lvl === 'warn' ? '偏高' : lvl === 'crit' ? '过高' : '正常',
+      now: 'CPU ' + fmtCpu(cpu) + '°C · SSD ' + fmtSsd(ssd) + '°C'
+    };
+  }
+
+  function tempRow(v){
+    var head;
+    if (v === 'A') {
+      head = '<div class="thermo"><div class="th-tube"><div class="th-fill"></div></div><div class="th-bulb"></div></div>'
+        + '<div class="lhead" style="left:9px"><div class="tlabel">温度</div><div class="tpill js-pill">正常</div></div>';
+    } else if (v === 'B') {
+      head = '<div class="led"></div>'
+        + '<div class="lhead"><div class="tlabel">温度</div><div class="tpill js-pill">正常</div></div>';
+    } else if (v === 'C') {
+      head = '<div class="led"></div>'
+        + '<div class="lhead"><div class="tlabel">温度</div><div class="tpill js-pill">正常</div></div>';
+    } else if (v === 'D') {
+      head = '<div class="led"></div>'
+        + '<div class="lhead"><div class="tlabel">温度</div><div class="tpill js-pill">正常</div></div>'
+        + '<div class="ladder">';
+      for (var i=0;i<20;i++){
+        var cls = 'z0' + (i>=14?' z1':'') + (i>=17?' z2':'') + ((i===14||i===17)?' tick':'');
+        head += '<i class="'+cls+'"></i>';
+      }
+      head += '</div>';
+    } else {
+      head = '<div class="led"></div>'
+        + '<div class="lhead"><div class="tlabel">温度</div><div class="tpill js-pill">正常</div></div>';
+    }
+
+    var val;
+    if (v === 'C') {
+      val = '<div class="tval sensors">'
+        + '<div class="sensor cpu" data-level="normal"><span class="sname">CPU</span>'
+        + '<span class="mini"><i class="m-tube"><i class="m-fill"></i></i><i class="m-bulb"></i></span>'
+        + '<span class="snum">—</span></div>'
+        + '<div class="sensor ssd" data-level="normal"><span class="sname">SSD</span>'
+        + '<span class="mini"><i class="m-tube"><i class="m-fill"></i></i><i class="m-bulb"></i></span>'
+        + '<span class="snum">—</span></div>'
+        + '</div>';
+    } else if (v === 'now') {
+      val = '<div class="tval"><span class="main js-now">—</span></div>'
+        + '<div class="now-bar"><i class="t1"></i><i class="t2"></i><i class="t3"></i>'
+        + '<i class="fill"></i><i class="cap"></i><i class="k1"></i><i class="k2"></i></div>';
+    } else {
+      val = '<div class="tval">'
+        + '<span class="sec js-sec">—</span>'
+        + '<span class="who js-who">—</span><span class="main js-main">—</span><span class="deg">°C</span>'
+        + '</div>';
+    }
+
+    var sep = (v === 'D' || v === 'now') ? '' : '<i class="sep"></i>';
+    return '<div class="row temp-row v'+v+'">' + head + val + sep + '</div>';
+  }
+
+  function diskRow(){
+    return '<div class="row disk">'
+      + '<div class="led" style="--lvc:#70D8FF;--leda:.65"></div>'
+      + '<div class="lhead"><div class="tlabel">磁盘 SSD</div>'
+      + '<div class="tpill" style="color:#70D8FF;background:rgba(112,216,255,.10);box-shadow:inset 0 0 0 .5px rgba(112,216,255,.30)">正常</div></div>'
+      + '<div class="disk-val">'
+      + '<span class="meta">44% 已用 · 494G  </span><span class="small">剩 </span>'
+      + '<span class="free">277</span><span class="g">G</span><span class="small"> 可用</span>'
+      + '</div>'
+      + '<div class="meter"><i class="t1"></i><i class="t2"></i><i class="t3"></i>'
+      + '<i class="fill"></i><i class="cap"></i><i class="k1"></i><i class="k2"></i></div>'
+      + '</div>';
+  }
+
+  function netRow(){
+    return '<div class="row net">'
+      + '<div class="led" style="--lvc:#70D8FF;--leda:.40"></div>'
+      + '<div class="lhead"><div class="tlabel">网络</div>'
+      + '<div class="tpill" style="color:#70D8FF;background:rgba(112,216,255,.10);box-shadow:inset 0 0 0 .5px rgba(112,216,255,.30)">在线</div></div>'
+      + '<div class="tval"><span class="main">有线 · en8</span></div>'
+      + '<i class="sep"></i>'
+      + '</div>';
+  }
+
+  function ipRow(){
+    return '<div class="row ip">'
+      + '<div class="led" style="--lvc:#70D8FF;--leda:.75"></div>'
+      + '<div class="lhead"><div class="tlabel">IPv4</div>'
+      + '<div class="tpill" style="color:#70D8FF;background:rgba(112,216,255,.10);box-shadow:inset 0 0 0 .5px rgba(112,216,255,.30)">在线</div></div>'
+      + '<div class="tval"><span class="main">192.168.31.23</span></div>'
+      + '</div>';
+  }
+
+  function cardHTML(v){
+    return '<div class="card" data-variant="' + v + '" tabindex="0">'
+      + '<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>'
+      + '<div class="chip"><i class="body"></i><i class="core"></i>'
+      + '<i class="pin pt"></i><i class="pin pb"></i><i class="pin pl"></i><i class="pin pr"></i></div>'
+      + '<div class="title">系统状态</div>'
+      + '<div class="subtitle">SYS STATUS · CORE-01</div>'
+      + '<div class="hline"></div>'
+      + '<div class="tile"><i class="edge"></i><div class="rows">'
+      + tempRow(v) + diskRow() + netRow() + ipRow()
+      + '</div></div>'
+      + '<div class="fline"></div>'
+      + '<div class="footer">'
+      + '<div class="foot">电池<b>100% · 交流电</b><span class="bpill">正常</span></div>'
+      + '<div class="clock"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></div>'
+      + '</div>'
+      + '</div>';
+  }
+
+  function caption(v){
+    var meta = VARIANTS.filter(function(x){return x.id===v;})[0];
+    return '<div class="cap"><div class="rowline"><span><span class="tag">'+v+'</span> <b>'+meta.name+'</b></span>'
+      + '<button class="pick" data-pick="'+v+'">选这个</button></div>'
+      + meta.note + '</div>';
+  }
+
+  function zoomHTML(v){
+    var meta = VARIANTS.filter(function(x){return x.id===v;})[0];
+    return '<div class="zoom" data-variant="'+v+'">'
+      + '<div class="zh"><b>'+v+'</b> '+meta.name+'<em>2×</em></div>'
+      + '<div class="zstage"><div class="zrow">'+tempRow(v)+'</div></div>'
+      + '<p>'+meta.note+'</p>'
+      + '</div>';
+  }
+
+  function nowRefHTML(){
+    return '<div class="zoom nowref">'
+      + '<div class="nowmain">'
+      + '<div class="zh"><b>现状</b> 2pt 容量条<em>2×</em></div>'
+      + '<div class="zstage"><div class="zrow">'+tempRow('now')+'</div></div>'
+      + '</div>'
+      + '<p>这就是现在的温度行：一根 2pt 三段条，和磁盘容量共用同一套语言。温度只被读成“占了多少”，看不出“热”。</p>'
+      + '</div>';
+  }
+
+  var cardsEl = document.getElementById('cards');
+  var zoomsEl = document.getElementById('zooms');
+  var all = ['A','B','C','D'];
+  cardsEl.innerHTML = all.map(function(v){
+    return '<div class="slot">' + cardHTML(v) + caption(v) + '</div>';
+  }).join('');
+  zoomsEl.innerHTML = nowRefHTML() + VARIANTS.map(function(x){ return zoomHTML(x.id); }).join('');
+
+  function render(){
+    var d = data();
+    document.body.dataset.level = d.level;
+    document.body.style.setProperty('--frac', d.frac.toFixed(4));
+
+    document.querySelectorAll('.js-who').forEach(function(e){ e.textContent = d.who; });
+    document.querySelectorAll('.js-main').forEach(function(e){
+      e.textContent = d.hotText;
+      e.classList.toggle('unknown', d.level==='unknown');
+    });
+    document.querySelectorAll('.js-sec').forEach(function(e){
+      e.textContent = d.level==='unknown' ? '—' : d.coldLabel + ' ' + d.coldText + '°';
+    });
+    document.querySelectorAll('.js-pill').forEach(function(e){ e.textContent = d.pill; });
+    document.querySelectorAll('.js-now').forEach(function(e){ e.textContent = d.now; });
+
+    // C：两支温度计各自上色
+    document.querySelectorAll('.sensor.cpu').forEach(function(s){
+      s.dataset.level = levelOf(d.cpu);
+      s.style.setProperty('--sfrac', d.cpu>0 ? clamp(d.cpu/100,0,1) : 0);
+      s.classList.toggle('hot', d.hotIsCpu && d.level!=='unknown');
+      s.querySelector('.snum').textContent = d.cpu>0 ? fmtCpu(d.cpu)+'°' : '—';
+    });
+    document.querySelectorAll('.sensor.ssd').forEach(function(s){
+      s.dataset.level = levelOf(d.ssd);
+      s.style.setProperty('--sfrac', d.ssd>0 ? clamp(d.ssd/100,0,1) : 0);
+      s.classList.toggle('hot', !d.hotIsCpu && d.level!=='unknown');
+      s.querySelector('.snum').textContent = d.ssd>0 ? fmtSsd(d.ssd)+'°' : '—';
+    });
+
+    // D：热力刻度点灯
+    var lit = Math.round(d.frac * 20);
+    document.querySelectorAll('.ladder').forEach(function(l){
+      Array.prototype.forEach.call(l.children, function(c, i){
+        c.classList.toggle('on', i < lit);
+        c.classList.toggle('head', i === lit-1 && lit>0);
+      });
+    });
+  }
+
+  function select(v){
+    state.sel = v;
+    document.querySelectorAll('.card[data-variant]').forEach(function(c){
+      c.classList.toggle('sel', c.dataset.variant === v);
+    });
+    document.querySelectorAll('.zoom').forEach(function(z){
+      z.classList.toggle('sel', z.dataset.variant === v);
+    });
+    document.querySelectorAll('.pick').forEach(function(b){
+      var on = b.dataset.pick === v;
+      b.classList.toggle('on', on);
+      b.textContent = on ? '已选' : '选这个';
+    });
+    var meta = VARIANTS.filter(function(x){return x.id===v;})[0];
+    document.getElementById('pickedName').textContent = meta ? (v + ' ' + meta.short) : '未选';
+    document.getElementById('pickedTag').textContent = meta ? '选中了告诉我' : '点卡片或按 1–4';
+  }
+
+  document.addEventListener('click', function(e){
+    var pick = e.target.closest('.pick');
+    if (pick) { select(pick.dataset.pick); return; }
+    var card = e.target.closest('.card');
+    if (card && card.dataset.variant && card.dataset.variant !== 'now') select(card.dataset.variant);
+  });
+
+  document.addEventListener('keydown', function(e){
+    if (e.target.tagName === 'INPUT') return;
+    var map = {'1':'A','2':'B','3':'C','4':'D','a':'A','b':'B','c':'C','d':'D'};
+    var v = map[e.key.toLowerCase()];
+    if (v) select(v);
+  });
+
+  var temp = document.getElementById('temp');
+  var tempOut = document.getElementById('tempOut');
+  var driftTimer = null;
+
+  function setPresetOn(tempValue){
+    document.querySelectorAll('#presets button').forEach(function(b){
+      b.classList.toggle('on', b.dataset.temp === tempValue);
+    });
+  }
+
+  function applyTemp(v, presetKey){
+    state.unknown = false;
+    state.cpu = clamp(v, 30, 95);
+    state.base = state.cpu;
+    temp.value = state.cpu;
+    tempOut.textContent = state.cpu.toFixed(1) + ' °C';
+    setPresetOn(presetKey !== undefined ? presetKey : String(v));
+    render();
+  }
+
+  temp.addEventListener('input', function(){
+    applyTemp(parseFloat(temp.value), '');
+  });
+
+  document.getElementById('presets').addEventListener('click', function(e){
+    var b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.temp === 'none') {
+      state.unknown = true;
+      tempOut.textContent = '—';
+      setPresetOn('none');
+      render();
+      return;
+    }
+    applyTemp(parseFloat(b.dataset.temp), b.dataset.temp);
+  });
+
+  document.getElementById('drift').addEventListener('change', function(e){
+    state.drift = e.target.checked;
+    if (state.drift) {
+      if (state.unknown) {
+        state.unknown = false;
+        setPresetOn(String(state.base));
+        tempOut.textContent = state.cpu.toFixed(1) + ' °C';
+      }
+      state.base = state.cpu;
+      driftTimer = setInterval(function(){
+        var j = (Math.random() - .5) * 1.6;
+        state.cpu = clamp(state.base + j, 30, 95);
+        render();
+      }, 900);
+    } else {
+      clearInterval(driftTimer);
+      driftTimer = null;
+      state.cpu = state.base;
+      render();
+    }
+  });
+
+  document.getElementById('ssdHot').addEventListener('change', function(e){
+    state.ssdHot = e.target.checked;
+    render();
+  });
+
+  applyTemp(47.5, '47.5');
+  select('A');
+})();
+</script>
+</body>
+</html>

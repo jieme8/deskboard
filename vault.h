@@ -51,6 +51,10 @@ NS_ASSUME_NONNULL_END
 
 NS_ASSUME_NONNULL_BEGIN
 
+// 库根目录只由 home 决定。刻意避开 Application Support：卸载器/清理器会把那里当
+// 「应用残留」整目录删掉，用户文件不能跟着陪葬。抽成纯函数是为了让校验能钉住这条。
+extern NSString *DeskVaultRootForHome(NSString *home);
+
 @interface DeskVault : NSObject
 + (instancetype)shared;
 
@@ -58,6 +62,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, copy) NSString *rootPath;      // 库的真实目录
 @property (nonatomic, readonly) unsigned long long totalBytes;
 @property (nonatomic, readonly) NSUInteger pendingCount;       // 还没统计完的条目数
+// 数据层自己的日志出口。main.m 接到 DeskLog；校验工具不设，保持静默。
+@property (nonatomic, copy, nullable) void (^logHandler)(NSString *message);
 
 // 入库：把外部目录搬进库里并登记。返回真正收下的文件夹数，只收目录不收文件。
 // 单个文件夹失败不影响其它，最后统一对账（记录只在文件真的落地后才写）。

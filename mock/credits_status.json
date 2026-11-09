@@ -1,0 +1,15 @@
+{
+  "data": {
+    "scene": 2,
+    "days": [
+      { "points": 400, "status": 3, "is_today": false, "bonus_points": 0, "day_no": 1 },
+      { "status": 3, "is_today": false, "bonus_points": 1024, "day_no": 2, "points": 1424 },
+      { "is_today": false, "bonus_points": 0, "day_no": 3, "points": 400, "status": 3 },
+      { "bonus_points": 0, "day_no": 4, "points": 1000, "status": 3, "is_today": true },
+      { "bonus_points": 0, "day_no": 5, "points": 400, "status": 1, "is_today": false },
+      { "is_today": false, "bonus_points": 0, "day_no": 6, "points": 400, "status": 1 },
+      { "day_no": 7, "points": 1000, "status": 1, "is_today": false, "bonus_points": 0 }
+    ]
+  },
+  "base_resp": { "status_code": 0, "status_msg": "ok" }
+}
